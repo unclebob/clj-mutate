@@ -1,3 +1,4 @@
+;; mutation-tested: 2026-02-24
 (ns clj-mutate.mutations)
 
 (defn- rand-comparison?
