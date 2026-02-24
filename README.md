@@ -55,3 +55,13 @@ If a `:cov` alias is configured with [Cloverage](https://github.com/cloverage/cl
                    speclj/speclj {:mvn/version "3.10.0"}}
       :extra-paths ["spec"]}
 ```
+
+## Claude Code Skill
+
+This repo includes a [Claude Code skill](skills/using-clj-mutate/SKILL.md) for AI-assisted mutation testing. Add it to your project's `.claude/settings.json`:
+
+```json
+{
+  "skills": ["github.com/unclebob/clj-mutate"]
+}
+```
