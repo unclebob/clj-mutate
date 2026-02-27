@@ -88,4 +88,17 @@
              (runner/extract-required-namespaces
                "(ns foo (:require [a.b :as ab] c.d))"))))
 
+(describe "find-specs-for-namespace"
+  (it "finds spec files that require the given namespace"
+    (let [specs (runner/find-specs-for-namespace 'clj-mutate.runner "spec")]
+      (should-contain "spec/clj_mutate/runner_spec.clj" specs)))
+
+  (it "returns empty vector when no specs require the namespace"
+    (should= [] (runner/find-specs-for-namespace 'nonexistent.namespace "spec")))
+
+  (it "finds multiple specs requiring the same namespace"
+    (let [specs (runner/find-specs-for-namespace 'clj-mutate.runner "spec")]
+      (should-contain "spec/clj_mutate/runner_spec.clj" specs)
+      (should-contain "spec/clj_mutate/core_spec.clj" specs))))
+
 (run-specs)

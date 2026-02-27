@@ -61,6 +61,14 @@
       (str/replace "_" "-")
       symbol))
 
+(defn- spec-files
+  "Recursively find all .clj files under dir."
+  [dir]
+  (->> (file-seq (File. dir))
+       (filter #(str/ends-with? (.getName %) ".clj"))
+       (map #(.getPath %))
+       sort))
+
 (defn extract-required-namespaces
   "Parse a source string's ns form and return set of required namespace symbols."
   [source-str]
@@ -75,3 +83,13 @@
                     (rest require-clause)))
           #{}))
       #{})))
+
+(defn find-specs-for-namespace
+  "Find all spec files under spec-dir that require the given namespace."
+  [target-ns spec-dir]
+  (vec (filter
+         (fn [path]
+           (try
+             (contains? (extract-required-namespaces (slurp path)) target-ns)
+             (catch Exception _ false)))
+         (spec-files spec-dir))))
