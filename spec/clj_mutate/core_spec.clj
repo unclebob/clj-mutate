@@ -59,19 +59,19 @@
       (should (.endsWith result "\n")))))
 
 (describe "mutate-and-test"
-  (it "writes mutated file, runs spec, restores original"
+  (it "writes mutated file, runs specs, restores original"
     (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
           temp-path (.getPath temp-file)
           original-content "(ns test-ns)\n(defn foo [] (+ 1 2))\n"]
       (spit temp-path original-content)
-      (with-redefs [runner/run-spec (fn ([_] :survived) ([_ _] :killed))]
+      (with-redefs [runner/run-specs (fn [_ _] :killed)]
         (let [forms (core/read-source-forms original-content)
               sites (core/discover-all-mutations forms)
               plus-site (first (filter #(= (:original %) '+) sites))
               result (core/mutate-and-test temp-path original-content
-                                           forms plus-site "fake_spec.clj" 30000)]
+                                           forms plus-site
+                                           ["fake_spec.clj"] 30000)]
           (should= :killed (:result result))
-          ;; Original file should be restored
           (should= original-content (slurp temp-path))))
       (.delete temp-file))))
 
@@ -84,12 +84,23 @@
     (let [result (core/validate-args ["nonexistent.cljc"])]
       (should-contain :error result)))
 
-  (it "returns error when spec file doesn't exist"
-    (with-redefs [runner/spec-exists? (fn [_] false)]
-      (let [temp (java.io.File/createTempFile "src" ".cljc")
-            result (core/validate-args [(.getPath temp)])]
-        (should-contain :error result)
-        (.delete temp)))))
+  (it "returns error when no specs found"
+    (with-redefs [runner/find-specs-for-namespace (fn [_ _] [])]
+      (let [temp (java.io.File/createTempFile "src" ".cljc")]
+        (spit temp "(ns test-ns)")
+        (let [result (core/validate-args [(.getPath temp)])]
+          (should-contain :error result)
+          (.delete temp)))))
+
+  (it "returns spec-paths vector when specs found"
+    (with-redefs [runner/find-specs-for-namespace
+                  (fn [_ _] ["spec/foo_spec.clj" "spec/bar_spec.clj"])]
+      (let [temp (java.io.File/createTempFile "src" ".cljc")]
+        (spit temp "(ns test-ns)")
+        (let [result (core/validate-args [(.getPath temp)])]
+          (should= ["spec/foo_spec.clj" "spec/bar_spec.clj"]
+                   (:spec-paths result))
+          (.delete temp))))))
 
 (describe "partition-by-coverage"
   (it "separates covered from uncovered sites"
@@ -117,26 +128,42 @@
   (it "produces summary with kill count"
     (let [results [{:site {:description "+ -> -"} :result :killed}
                    {:site {:description "1 -> 0"} :result :survived}]
-          report (core/format-report "src/empire/foo.cljc" "spec/empire/foo_spec.clj" results 0)]
+          report (core/format-report "src/empire/foo.cljc"
+                                     ["spec/empire/foo_spec.clj"]
+                                     results 0)]
       (should-contain "1/2 mutants killed" report)
       (should-contain "SURVIVED" report)
       (should-contain "KILLED" report)))
 
+  (it "lists multiple spec paths"
+    (let [results [{:site {:description "+ -> -"} :result :killed}]
+          report (core/format-report "src/foo.cljc"
+                                     ["spec/foo_spec.clj" "spec/foo_integration_spec.clj"]
+                                     results 0)]
+      (should-contain "spec/foo_spec.clj" report)
+      (should-contain "spec/foo_integration_spec.clj" report)))
+
   (it "includes line numbers in progress lines"
     (let [results [{:site {:description "+ -> -" :line 42} :result :killed}
                    {:site {:description "1 -> 0" :line 99 :index 1} :result :survived}]
-          report (core/format-report "src/empire/foo.cljc" "spec/empire/foo_spec.clj" results 0)]
+          report (core/format-report "src/empire/foo.cljc"
+                                     ["spec/empire/foo_spec.clj"]
+                                     results 0)]
       (should-contain "L42" report)
       (should-contain "L99" report)))
 
   (it "includes line numbers in survivor summary"
     (let [results [{:site {:description "1 -> 0" :line 207 :index 0} :result :survived}]
-          report (core/format-report "src/empire/foo.cljc" "spec/empire/foo_spec.clj" results 0)]
+          report (core/format-report "src/empire/foo.cljc"
+                                     ["spec/empire/foo_spec.clj"]
+                                     results 0)]
       (should-contain "L207" report)))
 
   (it "includes uncovered count in summary"
     (let [results [{:site {:description "+ -> -"} :result :killed}]
-          report (core/format-report "src/empire/foo.cljc" "spec/empire/foo_spec.clj" results 3)]
+          report (core/format-report "src/empire/foo.cljc"
+                                     ["spec/empire/foo_spec.clj"]
+                                     results 3)]
       (should-contain "1/1 mutants killed" report)
       (should-contain "3 uncovered" report))))
 
@@ -171,9 +198,10 @@
           temp-path (.getPath temp-file)
           original "(ns test-ns)\n(defn foo [] (+ 1 2))\n"]
       (spit temp-path original)
-      (with-redefs [runner/run-spec (fn ([_] :survived) ([_ _] :killed))
+      (with-redefs [runner/run-specs (fn [_ _] :killed)
+                    runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
                     coverage/load-coverage (fn [_] nil)]
-        (core/run-mutation-testing temp-path "fake_spec.clj")
+        (core/run-mutation-testing temp-path ["fake_spec.clj"])
         (let [stamped (slurp temp-path)]
           (should-not-be-nil (core/extract-mutation-date stamped))))
       (.delete temp-file)))
@@ -183,10 +211,11 @@
           temp-path (.getPath temp-file)
           original ";; mutation-tested: 2026-01-15\n(ns test-ns)\n(defn foo [] (+ 1 2))\n"]
       (spit temp-path original)
-      (with-redefs [runner/run-spec (fn ([_] :survived) ([_ _] :killed))
+      (with-redefs [runner/run-specs (fn [_ _] :killed)
+                    runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
                     coverage/load-coverage (fn [_] nil)]
         (let [captured (with-out-str
-                         (core/run-mutation-testing temp-path "fake_spec.clj"))]
+                         (core/run-mutation-testing temp-path ["fake_spec.clj"]))]
           (should-contain "Previous mutation test: 2026-01-15" captured)))
       (.delete temp-file))))
 
@@ -196,18 +225,16 @@
           temp-path (.getPath temp-file)
           original "(ns test-ns)\n(defn foo [] (+ 1 2))\n"]
       (spit temp-path original)
-      (with-redefs [runner/run-spec (fn ([_] :survived) ([_ _] :survived))
+      (with-redefs [runner/run-specs (fn [_ _] :survived)
+                    runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
                     coverage/load-coverage (fn [_] nil)]
-        ;; Full run on unstamped file — stamps it, reports survivors
         (let [report (with-out-str
-                       (core/run-mutation-testing temp-path "fake_spec.clj"))
-              ;; Extract the line number for + -> - from report
+                       (core/run-mutation-testing temp-path ["fake_spec.clj"]))
               plus-match (re-find #"L(\d+)\s+\+ -> -" report)
               reported-line (when plus-match (parse-long (second plus-match)))]
           (should-not-be-nil reported-line)
-          ;; Now use --lines with that reported line — should find the mutation
           (let [lines-report (with-out-str
-                               (core/run-mutation-testing temp-path "fake_spec.clj"
+                               (core/run-mutation-testing temp-path ["fake_spec.clj"]
                                                          #{reported-line}))]
             (should-contain "+ -> -" lines-report))))
       (.delete temp-file))))

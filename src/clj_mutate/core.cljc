@@ -126,12 +126,12 @@
     result))
 
 (defn mutate-and-test
-  "Apply one mutation, write file, run spec, restore original.
+  "Apply one mutation, write file, run specs, restore original.
    Returns {:site site :result :killed/:survived :timeout? bool}."
-  [source-path original-content _forms site spec-path timeout-ms]
+  [source-path original-content _forms site spec-paths timeout-ms]
   (try
     (spit source-path (mutate-source-text original-content site))
-    (let [result (runner/run-spec spec-path timeout-ms)]
+    (let [result (runner/run-specs spec-paths timeout-ms)]
       {:site site
        :result (if (= :timeout result) :killed result)
        :timeout? (= :timeout result)})
@@ -153,14 +153,14 @@
 
 (defn format-report
   "Format mutation testing results as a console report string."
-  [source-path spec-path results uncovered-count]
+  [source-path spec-paths results uncovered-count]
   (let [total (count results)
         killed (count (filter #(= :killed (:result %)) results))
         pct (if (zero? total) 0.0 (* 100.0 (/ killed total)))
         survivors (filter #(= :survived (:result %)) results)]
     (str
       (format "=== Mutation Testing: %s ===%n" source-path)
-      (format "Spec: %s%n" spec-path)
+      (str/join (map #(format "Spec: %s%n" %) spec-paths))
       (format "Found %d mutation sites.%n%n" total)
       (apply str (map-indexed #(format-line %1 total %2) results))
       (format "%n=== Summary ===%n")
@@ -180,7 +180,7 @@
                 (str/split (nth args (inc idx)) #","))))))
 
 (defn validate-args
-  "Validate command-line arguments. Returns {:source-path ... :spec-path ... :lines ...}
+  "Validate command-line arguments. Returns {:source-path ... :spec-paths [...] :lines ...}
    or {:error \"message\"}."
   [args]
   (cond
@@ -191,11 +191,13 @@
     {:error (str "Source file not found: " (first args))}
 
     :else
-    (let [spec-path (runner/source->spec-path (first args))
+    (let [source-path (first args)
+          target-ns (runner/source-path->namespace source-path)
+          spec-paths (runner/find-specs-for-namespace target-ns "spec")
           lines (parse-lines-arg args)]
-      (if (runner/spec-exists? spec-path)
-        {:source-path (first args) :spec-path spec-path :lines lines}
-        {:error (str "No spec found at: " spec-path)}))))
+      (if (seq spec-paths)
+        {:source-path source-path :spec-paths spec-paths :lines lines}
+        {:error (str "No specs found that require: " target-ns)}))))
 
 (defn- print-progress [i total result site]
   (println (format "[%3d/%d] %-8s  L%-4d %s"
@@ -238,15 +240,14 @@
 
 (defn run-mutation-testing
   "Run mutation testing on a single source file.
+   spec-paths: vector of spec files to run against each mutant.
    Optional lines arg: set of line numbers to restrict testing to."
-  ([source-path spec-path] (run-mutation-testing source-path spec-path nil))
-  ([source-path spec-path lines]
+  ([source-path spec-paths] (run-mutation-testing source-path spec-paths nil))
+  ([source-path spec-paths lines]
    (when (restore-from-backup! source-path)
      (println "Restored source from backup (previous run was interrupted)."))
    (let [original-content (slurp source-path)
          prev-date (extract-mutation-date original-content)
-         ;; Pre-stamp so line numbers match post-run file state.
-         ;; For --lines runs the file is already stamped; skip re-stamping.
          analysis-content (if lines
                             original-content
                             (stamp-mutation-date original-content (today-str)))
@@ -256,7 +257,7 @@
          [covered-sites uncovered] (partition-by-coverage all-sites covered-lines)
          sites (filter-by-lines covered-sites lines)]
      (println (format "=== Mutation Testing: %s ===" source-path))
-     (println (format "Spec: %s" spec-path))
+     (doseq [sp spec-paths] (println (format "Spec: %s" sp)))
      (when prev-date
        (println (format "Previous mutation test: %s" prev-date)))
      (println (format "Found %d mutation sites (%d covered, %d uncovered)."
@@ -266,7 +267,7 @@
                         (str/join "," (sort lines)) (count sites))))
      (println)
      (print "Baseline: ") (flush)
-     (let [{baseline-result :result elapsed-ms :elapsed-ms} (runner/run-spec-timed spec-path)
+     (let [{baseline-result :result elapsed-ms :elapsed-ms} (runner/run-specs-timed spec-paths)
            timeout-ms (* 10 elapsed-ms)]
        (if (= :survived baseline-result)
          (do
@@ -279,7 +280,7 @@
                              (map-indexed
                                (fn [i site]
                                  (let [result (mutate-and-test source-path analysis-content
-                                                               forms site spec-path timeout-ms)]
+                                                               forms site spec-paths timeout-ms)]
                                    (print-progress i (count sites) result site)
                                    result))
                                sites))
@@ -300,5 +301,5 @@
       (do (println (:error validated))
           (System/exit 1))
       (run-mutation-testing (:source-path validated)
-                            (:spec-path validated)
+                            (:spec-paths validated)
                             (:lines validated)))))
