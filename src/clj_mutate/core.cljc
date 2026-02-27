@@ -4,7 +4,8 @@
             [clojure.tools.reader.reader-types :as reader-types]
             [clj-mutate.coverage :as coverage]
             [clj-mutate.mutations :as mutations]
-            [clj-mutate.runner :as runner])
+            [clj-mutate.runner :as runner]
+            [clj-mutate.workers :as workers])
   (:import [java.io File]))
 
 (def ^:private mutation-comment-re #"^;; mutation-tested: (\d{4}-\d{2}-\d{2})")
@@ -208,6 +209,39 @@
                    (or (:line site) 0)
                    (:description site)))
   (flush))
+
+(defn run-mutations-parallel
+  "Run all mutation sites in parallel using worker directories.
+   Returns results sorted by site index."
+  [sites source-path original-content timeout-ms]
+  (let [n-workers (min (count sites)
+                       (.availableProcessors (Runtime/getRuntime)))
+        base-dir "target/mutation-workers"
+        worker-dirs (workers/create-worker-dirs!
+                      base-dir source-path original-content n-workers)
+        queue (java.util.concurrent.LinkedBlockingQueue. ^java.util.Collection (vec sites))
+        results (java.util.concurrent.ConcurrentLinkedQueue.)
+        counter (atom 0)
+        total (count sites)
+        lock (Object.)
+        futures (mapv
+                  (fn [dir]
+                    (future
+                      (loop []
+                        (when-let [site (.poll queue)]
+                          (let [r (mutate-and-test-in-dir dir source-path
+                                                          original-content site timeout-ms)
+                                n (swap! counter inc)]
+                            (.add results r)
+                            (locking lock
+                              (print-progress (dec n) total r site))
+                            (recur))))))
+                  worker-dirs)]
+    (try
+      (run! deref futures)
+      (vec (sort-by #(:index (:site %)) results))
+      (finally
+        (workers/cleanup-worker-dirs! base-dir)))))
 
 (defn- print-uncovered [uncovered]
   (when (seq uncovered)

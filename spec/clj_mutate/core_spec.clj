@@ -2,7 +2,8 @@
   (:require [speclj.core :refer :all]
             [clj-mutate.core :as core]
             [clj-mutate.coverage :as coverage]
-            [clj-mutate.runner :as runner]))
+            [clj-mutate.runner :as runner]
+            [clj-mutate.workers :as workers]))
 
 (describe "read-source-forms"
   (it "reads Clojure forms from a string"
@@ -248,5 +249,42 @@
           sites (core/discover-all-mutations forms)]
       (should (> (count sites) 0))
       (println (format "Found %d mutation sites in mutations.cljc" (count sites))))))
+
+(describe "run-mutations-parallel"
+  (it "tests all mutations and returns results sorted by index"
+    (let [sites [{:index 0 :original '+ :mutant '- :line 5 :description "+ -> -"}
+                 {:index 1 :original '> :mutant '>= :line 7 :description "> -> >="}
+                 {:index 2 :original '= :mutant 'not= :line 9 :description "= -> not="}]
+          call-count (atom 0)]
+      (with-redefs [core/mutate-and-test-in-dir
+                    (fn [_ _ _ site _]
+                      (swap! call-count inc)
+                      {:site site :result :killed :timeout? false})
+                    workers/create-worker-dirs!
+                    (fn [_ _ _ n] (vec (repeat n "target/fake-worker")))
+                    workers/cleanup-worker-dirs! (fn [_] nil)]
+        (let [results (core/run-mutations-parallel
+                        sites "src/foo.cljc" "(ns foo)" 30000)]
+          (should= 3 (count results))
+          (should= 3 @call-count)
+          ;; Results sorted by index
+          (should= [0 1 2] (mapv #(:index (:site %)) results))
+          ;; All killed
+          (should (every? #(= :killed (:result %)) results))))))
+
+  (it "works with more mutations than workers"
+    (let [sites (vec (for [i (range 10)]
+                       {:index i :original '+ :mutant '- :line (+ 5 i)
+                        :description (str "mut-" i)}))]
+      (with-redefs [core/mutate-and-test-in-dir
+                    (fn [_ _ _ site _]
+                      {:site site :result :killed :timeout? false})
+                    workers/create-worker-dirs!
+                    (fn [_ _ _ n] (vec (repeat n "target/fake-worker")))
+                    workers/cleanup-worker-dirs! (fn [_] nil)]
+        (let [results (core/run-mutations-parallel
+                        sites "src/foo.cljc" "(ns foo)" 30000)]
+          (should= 10 (count results))
+          (should= (vec (range 10)) (mapv #(:index (:site %)) results)))))))
 
 (run-specs)
