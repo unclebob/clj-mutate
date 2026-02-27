@@ -5,11 +5,14 @@
 (defn run-specs
   "Run all specs via clj -M:spec. Returns :killed, :survived, or :timeout.
    Optional timeout-ms: kill process after this many milliseconds.
+   Optional dir: run specs in the given directory.
    A timeout indicates an infinite loop — treated as :killed by caller."
-  ([] (run-specs nil))
-  ([timeout-ms]
+  ([] (run-specs nil nil))
+  ([timeout-ms] (run-specs timeout-ms nil))
+  ([timeout-ms dir]
    (let [pb (doto (ProcessBuilder. ^java.util.List ["clj" "-M:spec"])
               (.redirectErrorStream true))
+         _ (when dir (.directory pb (java.io.File. dir)))
          process (.start pb)
          _ (doto (Thread. (fn [] (try (let [is (.getInputStream process)]
                                         (while (not= -1 (.read is))))
