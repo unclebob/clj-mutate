@@ -310,14 +310,8 @@
            (when-not lines (print-uncovered uncovered))
            (save-backup! source-path analysis-content)
            (try
-             (let [results (doall
-                             (map-indexed
-                               (fn [i site]
-                                 (let [result (mutate-and-test source-path analysis-content
-                                                               forms site timeout-ms)]
-                                   (print-progress i (count sites) result site)
-                                   result))
-                               sites))
+             (let [results (run-mutations-parallel sites source-path
+                                                    analysis-content timeout-ms)
                    killed (count (filter #(= :killed (:result %)) results))
                    total (count results)
                    pct (if (zero? total) 0.0 (* 100.0 (/ killed total)))

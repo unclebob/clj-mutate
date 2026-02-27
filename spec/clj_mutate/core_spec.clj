@@ -171,9 +171,14 @@
           temp-path (.getPath temp-file)
           original "(ns test-ns)\n(defn foo [] (+ 1 2))\n"]
       (spit temp-path original)
-      (with-redefs [runner/run-specs (fn [_] :killed)
+      (with-redefs [runner/run-specs (fn [& _] :killed)
                     runner/run-specs-timed (fn [] {:result :survived :elapsed-ms 100})
-                    coverage/load-coverage (fn [_] nil)]
+                    coverage/load-coverage (fn [_] nil)
+                    core/run-mutations-parallel
+                    (fn [sites source-path content timeout-ms]
+                      (doall (map (fn [site]
+                                    (core/mutate-and-test source-path content nil site timeout-ms))
+                                  sites)))]
         (core/run-mutation-testing temp-path)
         (let [stamped (slurp temp-path)]
           (should-not-be-nil (core/extract-mutation-date stamped))))
@@ -184,9 +189,14 @@
           temp-path (.getPath temp-file)
           original ";; mutation-tested: 2026-01-15\n(ns test-ns)\n(defn foo [] (+ 1 2))\n"]
       (spit temp-path original)
-      (with-redefs [runner/run-specs (fn [_] :killed)
+      (with-redefs [runner/run-specs (fn [& _] :killed)
                     runner/run-specs-timed (fn [] {:result :survived :elapsed-ms 100})
-                    coverage/load-coverage (fn [_] nil)]
+                    coverage/load-coverage (fn [_] nil)
+                    core/run-mutations-parallel
+                    (fn [sites source-path content timeout-ms]
+                      (doall (map (fn [site]
+                                    (core/mutate-and-test source-path content nil site timeout-ms))
+                                  sites)))]
         (let [captured (with-out-str
                          (core/run-mutation-testing temp-path))]
           (should-contain "Previous mutation test: 2026-01-15" captured)))
@@ -198,9 +208,18 @@
           temp-path (.getPath temp-file)
           original "(ns test-ns)\n(defn foo [] (+ 1 2))\n"]
       (spit temp-path original)
-      (with-redefs [runner/run-specs (fn [_] :survived)
+      (with-redefs [runner/run-specs (fn [& _] :survived)
                     runner/run-specs-timed (fn [] {:result :survived :elapsed-ms 100})
-                    coverage/load-coverage (fn [_] nil)]
+                    coverage/load-coverage (fn [_] nil)
+                    core/run-mutations-parallel
+                    (fn [sites source-path content timeout-ms]
+                      (let [results (doall (map-indexed
+                                             (fn [i site]
+                                               (let [r (core/mutate-and-test source-path content nil site timeout-ms)]
+                                                 (#'core/print-progress i (count sites) r site)
+                                                 r))
+                                             sites))]
+                        results))]
         (let [report (with-out-str
                        (core/run-mutation-testing temp-path))
               plus-match (re-find #"L(\d+)\s+\+ -> -" report)
