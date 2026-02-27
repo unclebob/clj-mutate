@@ -26,9 +26,8 @@ clj -M:mutate src/myapp/foo.cljc --lines 45,67,89
 ```
 
 The tool automatically:
-- Finds the matching spec file (`src/myapp/foo.cljc` → `spec/myapp/foo_spec.clj`)
-- Runs a baseline test to verify specs pass unmodified
-- Applies each mutation, runs specs with a timeout (10x baseline)
+- Runs a baseline test (`clj -M:spec`) to verify all specs pass unmodified
+- Applies each mutation, runs all specs with a timeout (10x baseline)
 - Restores the original file after each mutation
 - Stamps the source with `;; mutation-tested: YYYY-MM-DD` on full runs
 
