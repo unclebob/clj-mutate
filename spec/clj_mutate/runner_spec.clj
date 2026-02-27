@@ -67,4 +67,25 @@
     (should= 'empire.computer.ship
              (runner/source-path->namespace "src/empire/computer/ship.cljc"))))
 
+(describe "extract-required-namespaces"
+  (it "extracts namespaces from vector require entries"
+    (should= #{'baz.quux 'another.ns}
+             (runner/extract-required-namespaces
+               "(ns foo.bar (:require [baz.quux :as q] [another.ns :refer [x]]))")))
+
+  (it "extracts bare symbol require entries"
+    (should= #{'baz.quux}
+             (runner/extract-required-namespaces
+               "(ns foo.bar (:require baz.quux))")))
+
+  (it "returns empty set when no require"
+    (should= #{}
+             (runner/extract-required-namespaces
+               "(ns foo.bar)")))
+
+  (it "handles mixed vector and bare symbol entries"
+    (should= #{'a.b 'c.d}
+             (runner/extract-required-namespaces
+               "(ns foo (:require [a.b :as ab] c.d))"))))
+
 (run-specs)

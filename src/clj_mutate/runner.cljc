@@ -1,5 +1,7 @@
 (ns clj-mutate.runner
-  (:require [clojure.string :as str])
+  (:require [clojure.string :as str]
+            [clojure.tools.reader :as reader]
+            [clojure.tools.reader.reader-types :as reader-types])
   (:import [java.io File]
            [java.util.concurrent TimeUnit]))
 
@@ -58,3 +60,18 @@
       (str/replace "/" ".")
       (str/replace "_" "-")
       symbol))
+
+(defn extract-required-namespaces
+  "Parse a source string's ns form and return set of required namespace symbols."
+  [source-str]
+  (let [rdr (reader-types/source-logging-push-back-reader source-str)
+        opts {:read-cond :allow :features #{:clj} :eof ::eof}
+        form (reader/read opts rdr)]
+    (if (and (seq? form) (= 'ns (first form)))
+      (let [require-clause (some #(and (seq? %) (= :require (first %)) %)
+                                 form)]
+        (if require-clause
+          (set (map #(if (vector? %) (first %) %)
+                    (rest require-clause)))
+          #{}))
+      #{})))
