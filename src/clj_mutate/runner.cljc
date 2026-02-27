@@ -47,3 +47,14 @@
         result (run-spec spec-path)
         elapsed (- (System/currentTimeMillis) start)]
     {:result result :elapsed-ms elapsed}))
+
+(defn source-path->namespace
+  "Convert source file path to Clojure namespace symbol.
+   src/empire/map_utils.cljc -> empire.map-utils"
+  [source-path]
+  (-> source-path
+      (str/replace #"^src/" "")
+      (str/replace #"\.\w+$" "")
+      (str/replace "/" ".")
+      (str/replace "_" "-")
+      symbol))

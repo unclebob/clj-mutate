@@ -54,4 +54,17 @@
       (should= :survived result)
       (should (pos? elapsed-ms)))))
 
+(describe "source-path->namespace"
+  (it "converts simple source path"
+    (should= 'empire.combat
+             (runner/source-path->namespace "src/empire/combat.cljc")))
+
+  (it "converts underscored path to hyphenated namespace"
+    (should= 'empire.map-utils
+             (runner/source-path->namespace "src/empire/map_utils.cljc")))
+
+  (it "converts deeply nested path"
+    (should= 'empire.computer.ship
+             (runner/source-path->namespace "src/empire/computer/ship.cljc"))))
+
 (run-specs)
