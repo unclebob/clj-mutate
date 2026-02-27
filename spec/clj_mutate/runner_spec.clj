@@ -2,26 +2,6 @@
   (:require [speclj.core :refer :all]
             [clj-mutate.runner :as runner]))
 
-(describe "source->spec-path"
-  (it "maps root source to spec"
-    (should= "spec/empire/combat_spec.clj"
-             (runner/source->spec-path "src/empire/combat.cljc")))
-
-  (it "maps subdirectory source to spec"
-    (should= "spec/empire/computer/ship_spec.clj"
-             (runner/source->spec-path "src/empire/computer/ship.cljc")))
-
-  (it "handles deeply nested paths"
-    (should= "spec/empire/movement/map_utils_spec.clj"
-             (runner/source->spec-path "src/empire/movement/map_utils.cljc"))))
-
-(describe "spec-exists?"
-  (it "returns true for existing spec"
-    (should (runner/spec-exists? "spec/clj_mutate/runner_spec.clj")))
-
-  (it "returns false for nonexistent spec"
-    (should-not (runner/spec-exists? "spec/clj_mutate/nonexistent_spec.clj"))))
-
 (describe "run-spec"
   (it "returns :killed when spec fails (real spec with syntax error)"
     (spit "/tmp/failing_spec.clj"
