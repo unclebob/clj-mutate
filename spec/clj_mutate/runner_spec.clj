@@ -9,7 +9,7 @@
                      (.mkdirs))
           dir-path (.getPath temp-dir)]
       (try
-        ;; Just verify the 3-arity exists — call with nonsense dir
+        ;; Just verify the 2-arity exists — call with nonsense dir
         ;; that will fail fast (no deps.edn). The point is no
         ;; ArityException.
         (should-not-throw
