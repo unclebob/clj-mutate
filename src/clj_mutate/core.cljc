@@ -133,6 +133,20 @@
     (finally
       (spit source-path original-content))))
 
+(defn mutate-and-test-in-dir
+  "Apply one mutation in a worker directory, run specs there, restore.
+   Returns {:site site :result :killed/:survived :timeout? bool}."
+  [worker-dir source-rel-path original-content site timeout-ms]
+  (let [worker-source (str worker-dir "/" source-rel-path)]
+    (try
+      (spit worker-source (mutate-source-text original-content site))
+      (let [result (runner/run-specs timeout-ms worker-dir)]
+        {:site site
+         :result (if (= :timeout result) :killed result)
+         :timeout? (= :timeout result)})
+      (finally
+        (spit worker-source original-content)))))
+
 (defn- result-label [r]
   (cond
     (:timeout? r) "TIMEOUT"

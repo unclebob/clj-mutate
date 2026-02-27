@@ -211,6 +211,36 @@
             (should-contain "+ -> -" lines-report))))
       (.delete temp-file))))
 
+(describe "mutate-and-test-in-dir"
+  (it "writes mutated content to worker dir, calls run-specs with dir, restores"
+    (let [worker-dir (doto (java.io.File. (str "target/test-worker-" (System/nanoTime)))
+                       (.mkdirs))
+          worker-path (.getPath worker-dir)
+          source-rel "src/test_ns.cljc"
+          source-file (java.io.File. worker-dir source-rel)
+          _ (.mkdirs (.getParentFile source-file))
+          original-content "(ns test-ns)\n(defn foo [] (+ 1 2))\n"
+          _ (spit (.getPath source-file) original-content)
+          forms (core/read-source-forms original-content)
+          sites (core/discover-all-mutations forms)
+          plus-site (first (filter #(= (:original %) '+) sites))
+          received-dir (atom nil)]
+      (with-redefs [runner/run-specs (fn [timeout dir]
+                                       (reset! received-dir dir)
+                                       ;; Verify mutated content is on disk
+                                       (should-contain "(- 1 2)" (slurp (.getPath source-file)))
+                                       :killed)]
+        (let [result (core/mutate-and-test-in-dir worker-path source-rel
+                                                   original-content plus-site 30000)]
+          (should= :killed (:result result))
+          (should= worker-path @received-dir)
+          ;; Original content should be restored
+          (should= original-content (slurp (.getPath source-file)))))
+      ;; Cleanup
+      (.delete source-file)
+      (.delete (.getParentFile source-file))
+      (.delete worker-dir))))
+
 (describe "integration: discover mutations in a real source file"
   (it "finds mutation sites in mutations.cljc"
     (let [content (slurp "src/clj_mutate/mutations.cljc")
