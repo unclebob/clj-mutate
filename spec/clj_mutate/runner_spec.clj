@@ -101,4 +101,34 @@
       (should-contain "spec/clj_mutate/runner_spec.clj" specs)
       (should-contain "spec/clj_mutate/core_spec.clj" specs))))
 
+(describe "run-specs"
+  (it "returns :survived when all specs pass"
+    (spit "/tmp/pass1_spec.clj"
+          "(ns pass1-spec (:require [speclj.core :refer :all]))
+           (describe \"p1\" (it \"p\" (should= 1 1))) (run-specs)")
+    (spit "/tmp/pass2_spec.clj"
+          "(ns pass2-spec (:require [speclj.core :refer :all]))
+           (describe \"p2\" (it \"p\" (should= 2 2))) (run-specs)")
+    (should= :survived
+             (runner/run-specs ["/tmp/pass1_spec.clj" "/tmp/pass2_spec.clj"] nil)))
+
+  (it "returns :killed on first failure and short-circuits"
+    (spit "/tmp/fail_spec.clj"
+          "(ns fail-spec (:require [speclj.core :refer :all]))
+           (describe \"f\" (it \"f\" (should= 1 2))) (run-specs)")
+    (spit "/tmp/pass3_spec.clj"
+          "(ns pass3-spec (:require [speclj.core :refer :all]))
+           (describe \"p3\" (it \"p\" (should= 1 1))) (run-specs)")
+    (should= :killed
+             (runner/run-specs ["/tmp/fail_spec.clj" "/tmp/pass3_spec.clj"] nil))))
+
+(describe "run-specs-timed"
+  (it "returns result and elapsed time for multiple specs"
+    (spit "/tmp/timed1_spec.clj"
+          "(ns timed1-spec (:require [speclj.core :refer :all]))
+           (describe \"t1\" (it \"p\" (should= 1 1))) (run-specs)")
+    (let [{:keys [result elapsed-ms]} (runner/run-specs-timed ["/tmp/timed1_spec.clj"])]
+      (should= :survived result)
+      (should (pos? elapsed-ms)))))
+
 (run-specs)

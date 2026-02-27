@@ -50,6 +50,26 @@
         elapsed (- (System/currentTimeMillis) start)]
     {:result result :elapsed-ms elapsed}))
 
+(defn run-specs
+  "Run multiple spec files. Returns :killed on first failure, :survived if all pass.
+   Short-circuits: stops running specs as soon as one kills the mutant."
+  [spec-paths timeout-ms]
+  (loop [[path & more] spec-paths]
+    (if (nil? path)
+      :survived
+      (let [result (run-spec path timeout-ms)]
+        (if (= :survived result)
+          (recur more)
+          result)))))
+
+(defn run-specs-timed
+  "Run all specs without timeout. Returns {:result :killed/:survived :elapsed-ms N}."
+  [spec-paths]
+  (let [start (System/currentTimeMillis)
+        result (run-specs spec-paths nil)
+        elapsed (- (System/currentTimeMillis) start)]
+    {:result result :elapsed-ms elapsed}))
+
 (defn source-path->namespace
   "Convert source file path to Clojure namespace symbol.
    src/empire/map_utils.cljc -> empire.map-utils"
