@@ -20,7 +20,7 @@ Add a `:mutate` alias to your project's `deps.edn`:
          :extra-paths ["spec"]}
 ```
 
-Requires [Speclj](https://github.com/slagyr/speclj) as test runner. Source files must have matching spec files (`src/app/foo.cljc` -> `spec/app/foo_spec.clj`).
+Requires [Speclj](https://github.com/slagyr/speclj) as test runner. Spec files must `:require` the namespace under test — the tool discovers them automatically by parsing `ns` forms under `spec/`.
 
 Optional coverage integration (skips mutations on uncovered lines):
 
@@ -42,7 +42,7 @@ clj -M:mutate src/myapp/foo.cljc --lines 45,67,89
 ```
 
 The tool automatically:
-- Finds the matching spec file
+- Discovers all spec files that `:require` the target namespace
 - Runs a baseline test to verify specs pass unmodified
 - Applies each mutation, runs specs with timeout (10x baseline)
 - Restores original file after each mutation
@@ -88,6 +88,6 @@ Known-equivalent mutations are auto-suppressed to reduce false survivors:
 
 ## Common Mistakes
 
-- **No matching spec file**: Tool expects `src/` -> `spec/` path mapping with `_spec.clj` suffix
+- **No specs found**: Ensure at least one spec file under `spec/` has `(:require [your.namespace ...])` in its `ns` form
 - **Specs fail at baseline**: Fix your specs before mutation testing
 - **Chasing equivalent mutations**: Some survivors are mathematically equivalent; suppress them rather than writing impossible tests
