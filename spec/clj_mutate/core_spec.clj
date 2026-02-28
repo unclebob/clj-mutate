@@ -184,6 +184,26 @@
           (should-not-be-nil (core/extract-mutation-date stamped))))
       (.delete temp-file)))
 
+  (it "cleans up stale worker directories at startup"
+    (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
+          temp-path (.getPath temp-file)
+          original "(ns test-ns)\n(defn foo [] (+ 1 2))\n"
+          cleanup-args (atom [])]
+      (spit temp-path original)
+      (with-redefs [workers/cleanup-worker-dirs!
+                    (fn [base-dir] (swap! cleanup-args conj base-dir))
+                    runner/run-specs (fn [& _] :killed)
+                    runner/run-specs-timed (fn [] {:result :survived :elapsed-ms 100})
+                    coverage/load-coverage (fn [_] nil)
+                    core/run-mutations-parallel
+                    (fn [sites source-path content timeout-ms]
+                      (doall (map (fn [site]
+                                    (core/mutate-and-test source-path content nil site timeout-ms))
+                                  sites)))]
+        (core/run-mutation-testing temp-path)
+        (should= ["target/mutation-workers"] @cleanup-args))
+      (.delete temp-file)))
+
   (it "reports previous mutation test date"
     (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
           temp-path (.getPath temp-file)
