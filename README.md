@@ -46,7 +46,12 @@ Known-equivalent mutations (e.g. comparisons on `(rand)`, constants inside `rand
 
 ## Coverage Integration
 
-If a `:cov` alias is configured with [Cloverage](https://github.com/cloverage/cloverage) and `--lcov` output, the tool reads `target/coverage/lcov.info` to skip mutations on uncovered lines. If the coverage data is missing or stale, it runs `clj -M:cov` automatically.
+If a `:cov` alias is configured with [Cloverage](https://github.com/cloverage/cloverage) and `--lcov` output, the tool reads `target/coverage/lcov.info` to skip mutations on uncovered lines.
+
+Coverage freshness is checked automatically:
+- If `target/coverage/lcov.info` is missing, `clj-mutate` regenerates it with `clj -M:cov --lcov`.
+- If LCOV is older than current source/spec inputs, `clj-mutate` regenerates it with `clj -M:cov --lcov`.
+- The run prints a diagnostic message when regeneration is triggered.
 
 ```clojure
 :cov {:main-opts ["-m" "speclj.cloverage" "--" "-p" "src" "-s" "spec" "--lcov"]
@@ -54,6 +59,14 @@ If a `:cov` alias is configured with [Cloverage](https://github.com/cloverage/cl
                    speclj/speclj {:mvn/version "3.10.0"}}
       :extra-paths ["spec"]}
 ```
+
+## Parallel Worker Isolation
+
+Parallel mutation runs now use a unique worker root per run:
+
+`target/mutation-workers/run-<uuid>/worker-N`
+
+This avoids collisions when two mutation runs overlap or when a prior run exits unexpectedly.
 
 ## Claude Code Skill
 

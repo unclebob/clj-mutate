@@ -9,7 +9,7 @@
   (:import [java.io File]))
 
 (def ^:private mutation-comment-re #"^;; mutation-tested: (\d{4}-\d{2}-\d{2})")
-(def ^:private worker-base-dir "target/mutation-workers")
+(def ^:private worker-root-dir "target/mutation-workers")
 
 (defn extract-mutation-date
   "Extract the mutation test date from a source file's content.
@@ -215,10 +215,11 @@
   "Run all mutation sites in parallel using worker directories.
    Returns results sorted by site index."
   [sites source-path original-content timeout-ms]
-  (let [n-workers (min (count sites)
+  (let [run-base-dir (workers/new-run-base-dir worker-root-dir)
+        n-workers (min (count sites)
                        (.availableProcessors (Runtime/getRuntime)))
         worker-dirs (workers/create-worker-dirs!
-                      worker-base-dir source-path original-content n-workers)
+                      run-base-dir source-path original-content n-workers)
         queue (java.util.concurrent.LinkedBlockingQueue. ^java.util.Collection (vec sites))
         results (java.util.concurrent.ConcurrentLinkedQueue.)
         counter (atom 0)
@@ -241,7 +242,7 @@
       (run! deref futures)
       (vec (sort-by #(:index (:site %)) results))
       (finally
-        (workers/cleanup-worker-dirs! worker-base-dir)))))
+        (workers/cleanup-worker-dirs! run-base-dir)))))
 
 (defn- print-uncovered [uncovered]
   (when (seq uncovered)
@@ -279,8 +280,6 @@
    Optional lines arg: set of line numbers to restrict testing to."
   ([source-path] (run-mutation-testing source-path nil))
   ([source-path lines]
-   ;; Remove stale worker directories from an interrupted prior run.
-   (workers/cleanup-worker-dirs! worker-base-dir)
    (when (restore-from-backup! source-path)
      (println "Restored source from backup (previous run was interrupted)."))
    (let [original-content (slurp source-path)

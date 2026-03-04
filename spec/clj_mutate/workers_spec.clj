@@ -4,6 +4,15 @@
   (:import [java.io File]
            [java.nio.file Files]))
 
+(describe "new-run-base-dir"
+  (it "creates unique run directories under the root"
+    (let [root "target/mutation-workers"
+          a (workers/new-run-base-dir root)
+          b (workers/new-run-base-dir root)]
+      (should (.startsWith a (str root "/run-")))
+      (should (.startsWith b (str root "/run-")))
+      (should-not= a b))))
+
 (describe "create-worker-dirs!"
   (it "creates N worker directories under base-dir"
     (let [base-dir "target/test-workers"

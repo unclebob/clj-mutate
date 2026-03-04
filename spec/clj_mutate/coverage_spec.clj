@@ -44,28 +44,39 @@
     (should= "target/coverage/lcov.info" (cov/lcov-path))))
 
 (describe "run-coverage!"
-  (it "returns true on success"
-    (with-redefs [clojure.java.shell/sh (fn [& _] {:exit 0 :out "" :err ""})]
-      (should (cov/run-coverage!))))
+  (it "runs clj -M:cov --lcov and returns true on success"
+    (let [calls (atom nil)]
+      (with-redefs [clojure.java.shell/sh (fn [& args]
+                                            (reset! calls args)
+                                            {:exit 0 :out "" :err ""})]
+        (should (cov/run-coverage!))
+        (should= ["clj" "-M:cov" "--lcov"] @calls))))
 
   (it "returns false on failure"
     (with-redefs [clojure.java.shell/sh (fn [& _] {:exit 1 :out "" :err ""})]
       (should-not (cov/run-coverage!)))))
 
 (describe "load-coverage"
-  (it "runs coverage when lcov.info missing, parses, returns covered lines"
-    (let [ran? (atom false)]
+  (it "runs coverage when lcov.info is missing"
+    (let [ran? (atom false)
+          temp-lcov (str "/tmp/test-lcov-" (System/nanoTime) ".info")]
       (with-redefs [cov/run-coverage! (fn [] (reset! ran? true)
-                                        (spit (cov/lcov-path) sample-lcov)
+                                        (spit temp-lcov sample-lcov)
                                         true)
-                    cov/lcov-path (constantly "/tmp/test-lcov.info")]
-        (spit "/tmp/test-lcov.info" sample-lcov)
+                    cov/lcov-path (constantly temp-lcov)]
+        (java.nio.file.Files/deleteIfExists
+          (.toPath (java.io.File. temp-lcov)))
         (let [result (cov/load-coverage "src/empire/combat.cljc")]
+          (should @ran?)
           (should= #{1 3 5} result)))))
 
   (it "returns nil when lcov.info does not exist and coverage fails"
-    (with-redefs [cov/run-coverage! (fn [] false)
-                  cov/lcov-path (constantly "/tmp/nonexistent-lcov.info")]
-      (should-be-nil (cov/load-coverage "src/empire/combat.cljc")))))
+    (let [temp-lcov (str "/tmp/nonexistent-lcov-" (System/nanoTime) ".info")]
+      (with-redefs [cov/run-coverage! (fn [] false)
+                    cov/lcov-path (constantly temp-lcov)]
+        (java.nio.file.Files/deleteIfExists
+          (.toPath (java.io.File. temp-lcov)))
+        (should-be-nil (cov/load-coverage "src/empire/combat.cljc")))))
+  )
 
 (run-specs)

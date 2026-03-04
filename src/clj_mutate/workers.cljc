@@ -1,10 +1,17 @@
 (ns clj-mutate.workers
   (:import [java.io File]
+           [java.util UUID]
            [java.nio.file Files Paths]))
+
+(defn new-run-base-dir
+  "Return a unique per-run worker base directory under root-dir."
+  [root-dir]
+  (str root-dir "/run-" (str (UUID/randomUUID))))
 
 (defn- symlink! [link-path target-path]
   (let [link (Paths/get link-path (into-array String []))
         target (.toAbsolutePath (Paths/get target-path (into-array String [])))]
+    (Files/deleteIfExists link)
     (Files/createSymbolicLink link target (into-array java.nio.file.attribute.FileAttribute []))))
 
 (defn- delete-recursive! [^File f]

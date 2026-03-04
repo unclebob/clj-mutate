@@ -42,24 +42,46 @@
   "target/coverage/lcov.info")
 
 (defn run-coverage!
-  "Shell out to clj -M:cov. Returns true on success."
+  "Shell out to clj -M:cov --lcov. Returns true on success."
   []
-  (let [result (shell/sh "clj" "-M:cov")]
+  (let [result (shell/sh "clj" "-M:cov" "--lcov")]
     (zero? (:exit result))))
 
-(defn- stale?
-  "True if lcov file is missing or older than source file."
-  [lcov-file source-path]
-  (let [source-file (File. source-path)]
-    (or (not (.exists lcov-file))
-        (< (.lastModified lcov-file)
-           (.lastModified source-file)))))
+(defn- newest-file-mtime
+  "Return the newest mtime among regular files under dir, or 0."
+  [^File dir]
+  (if (.exists dir)
+    (reduce max 0 (map #(.lastModified ^File %)
+                       (filter #(.isFile ^File %) (file-seq dir))))
+    0))
+
+(defn- newest-input-mtime
+  "Return newest mtime across source-path, src/, and spec/."
+  [source-path]
+  (let [source-file (File. source-path)
+        source-mtime (if (.exists source-file) (.lastModified source-file) 0)
+        src-mtime (newest-file-mtime (File. "src"))
+        spec-mtime (newest-file-mtime (File. "spec"))]
+    (max source-mtime src-mtime spec-mtime)))
+
+(defn- stale-reason
+  "Return nil when fresh, otherwise one of :missing or :stale."
+  [^File lcov-file source-path]
+  (cond
+    (not (.exists lcov-file)) :missing
+    (< (.lastModified lcov-file) (newest-input-mtime source-path)) :stale
+    :else nil))
 
 (defn load-coverage
   "Orchestrator: run coverage if lcov.info missing/stale, parse, return covered lines."
   [source-path]
   (let [lcov-file (File. (lcov-path))]
-    (when (stale? lcov-file source-path)
-      (run-coverage!))
+    (when-let [reason (stale-reason lcov-file source-path)]
+      (println
+        (case reason
+          :missing "Coverage file missing; regenerating LCOV with clj -M:cov --lcov."
+          :stale "Coverage file is stale; regenerating LCOV with clj -M:cov --lcov."))
+      (when-not (run-coverage!)
+        (println "Coverage refresh failed; continuing with existing coverage if available.")))
     (when (.exists lcov-file)
       (covered-lines (parse-lcov (slurp lcov-file)) source-path))))
