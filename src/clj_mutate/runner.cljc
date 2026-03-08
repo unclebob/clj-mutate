@@ -1,16 +1,30 @@
 ;; mutation-tested: 2026-02-27
 (ns clj-mutate.runner
+  (:require [clojure.string :as str])
   (:import [java.util.concurrent TimeUnit]))
 
+(def ^:private default-test-command "clj -M:spec")
+
+(defn- command->argv
+  [command]
+  (let [argv (->> (str/split (or command "") #"\s+")
+                  (remove str/blank?)
+                  vec)]
+    (if (seq argv)
+      argv
+      (str/split default-test-command #"\s+"))))
+
 (defn run-specs
-  "Run all specs via clj -M:spec. Returns :killed, :survived, or :timeout.
+  "Run all specs. Returns :killed, :survived, or :timeout.
    Optional timeout-ms: kill process after this many milliseconds.
    Optional dir: run specs in the given directory.
+   Optional test-command: shell-like command string (split on whitespace).
    A timeout indicates an infinite loop — treated as :killed by caller."
-  ([] (run-specs nil nil))
-  ([timeout-ms] (run-specs timeout-ms nil))
-  ([timeout-ms dir]
-   (let [pb (doto (ProcessBuilder. ^java.util.List ["clj" "-M:spec"])
+  ([] (run-specs nil nil default-test-command))
+  ([timeout-ms] (run-specs timeout-ms nil default-test-command))
+  ([timeout-ms dir] (run-specs timeout-ms dir default-test-command))
+  ([timeout-ms dir test-command]
+   (let [pb (doto (ProcessBuilder. ^java.util.List (command->argv test-command))
               (.redirectErrorStream true))
          _ (when dir (.directory pb (java.io.File. dir)))
          process (.start pb)
@@ -31,8 +45,10 @@
 
 (defn run-specs-timed
   "Run all specs without timeout. Returns {:result :killed/:survived :elapsed-ms N}."
-  []
+  ([]
+   (run-specs-timed default-test-command))
+  ([test-command]
   (let [start (System/currentTimeMillis)
-        result (run-specs)
+        result (run-specs nil nil test-command)
         elapsed (- (System/currentTimeMillis) start)]
-    {:result result :elapsed-ms elapsed}))
+    {:result result :elapsed-ms elapsed})))

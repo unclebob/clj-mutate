@@ -18,6 +18,19 @@
                  (when (instance? clojure.lang.ArityException e)
                    (throw e)))))
         (finally
+          (.delete temp-dir)))))
+
+  (it "accepts a timeout-ms, dir, and test-command parameter"
+    (let [temp-dir (doto (File. (str "target/test-runner-" (System/nanoTime)))
+                     (.mkdirs))
+          dir-path (.getPath temp-dir)]
+      (try
+        (should-not-throw
+          (try (runner/run-specs 100 dir-path "clj -M:spec")
+               (catch Exception e
+                 (when (instance? clojure.lang.ArityException e)
+                   (throw e)))))
+        (finally
           (.delete temp-dir))))))
 
 (run-specs)

@@ -11,6 +11,17 @@
 (def ^:private mutation-comment-re #"^;; mutation-tested: (\d{4}-\d{2}-\d{2})")
 (def ^:private worker-root-dir "target/mutation-workers")
 
+(def ^:private usage-summary
+  (str
+    "Usage: clj -M:mutate <source-file.cljc> [options]\n"
+    "\n"
+    "Options:\n"
+    "  --lines L1,L2,...      Run only mutations on these source lines\n"
+    "  --timeout-factor N     Mutation timeout multiplier vs baseline (default 10)\n"
+    "  --test-command CMD     Test command to run (default \"clj -M:spec\")\n"
+    "  --max-workers N        Limit parallel workers to N (positive integer)\n"
+    "  --help                 Print this help and exit\n"))
+
 (defn extract-mutation-date
   "Extract the mutation test date from a source file's content.
    Returns the date string or nil."
@@ -125,10 +136,10 @@
 (defn mutate-and-test
   "Apply one mutation, write file, run all specs, restore original.
    Returns {:site site :result :killed/:survived :timeout? bool}."
-  [source-path original-content _forms site timeout-ms]
+  [source-path original-content _forms site timeout-ms test-command]
   (try
     (spit source-path (mutate-source-text original-content site))
-    (let [result (runner/run-specs timeout-ms)]
+    (let [result (runner/run-specs timeout-ms nil test-command)]
       {:site site
        :result (if (= :timeout result) :killed result)
        :timeout? (= :timeout result)})
@@ -138,11 +149,11 @@
 (defn mutate-and-test-in-dir
   "Apply one mutation in a worker directory, run specs there, restore.
    Returns {:site site :result :killed/:survived :timeout? bool}."
-  [worker-dir source-rel-path original-content site timeout-ms]
+  [worker-dir source-rel-path original-content site timeout-ms test-command]
   (let [worker-source (str worker-dir "/" source-rel-path)]
     (try
       (spit worker-source (mutate-source-text original-content site))
-      (let [result (runner/run-specs timeout-ms worker-dir)]
+      (let [result (runner/run-specs timeout-ms worker-dir test-command)]
         {:site site
          :result (if (= :timeout result) :killed result)
          :timeout? (= :timeout result)})
@@ -181,27 +192,83 @@
         (str "Survivors:\n"
              (apply str (map format-survivor survivors)))))))
 
-(defn- parse-lines-arg
-  "Parse --lines L1,L2,... into a set of integers, or nil if not present."
-  [args]
-  (when-let [idx (some #(when (= "--lines" (nth args %)) %) (range (count args)))]
-    (when (< (inc idx) (count args))
-      (set (map #(parse-long (str/trim %))
-                (str/split (nth args (inc idx)) #","))))))
+(defn- parse-lines
+  [value]
+  (set (map #(parse-long (str/trim %))
+            (str/split value #","))))
 
 (defn validate-args
-  "Validate command-line arguments. Returns {:source-path ... :lines ...}
-   or {:error \"message\"}."
+  "Validate command-line arguments.
+   Returns {:help true :usage ...} for --help,
+   {:source-path ... :lines ... :timeout-factor ... :test-command ... :max-workers ...}
+   or {:error \"message\" :usage ...}."
   [args]
-  (cond
-    (empty? args)
-    {:error "Usage: clj -M:mutate <source-file.cljc> [--lines L1,L2,...]"}
+  (if (some #{"--help"} args)
+    {:help true :usage usage-summary}
+    (loop [[arg & rest-args] args
+           source-path nil
+           lines nil
+           timeout-factor 10
+           test-command "clj -M:spec"
+           max-workers nil]
+      (cond
+        (nil? arg)
+        (cond
+          (nil? source-path)
+          {:error "Missing source file argument." :usage usage-summary}
 
-    (not (.exists (File. (first args))))
-    {:error (str "Source file not found: " (first args))}
+          (not (.exists (File. ^String source-path)))
+          {:error (str "Source file not found: " source-path) :usage usage-summary}
 
-    :else
-    {:source-path (first args) :lines (parse-lines-arg args)}))
+          :else
+          {:source-path source-path
+           :lines lines
+           :timeout-factor timeout-factor
+           :test-command test-command
+           :max-workers max-workers})
+
+        (= "--lines" arg)
+        (if-let [value (first rest-args)]
+          (let [parsed-lines (parse-lines value)]
+            (if (every? some? parsed-lines)
+              (recur (rest rest-args) source-path parsed-lines timeout-factor test-command max-workers)
+              {:error "Invalid value for --lines. Expected comma-separated integers."
+               :usage usage-summary}))
+          {:error "Missing value for --lines." :usage usage-summary})
+
+        (= "--timeout-factor" arg)
+        (if-let [value (first rest-args)]
+          (let [n (parse-long value)]
+            (if (and n (pos? n))
+              (recur (rest rest-args) source-path lines n test-command max-workers)
+              {:error "Invalid value for --timeout-factor. Expected a positive integer."
+               :usage usage-summary}))
+          {:error "Missing value for --timeout-factor." :usage usage-summary})
+
+        (= "--test-command" arg)
+        (if-let [value (first rest-args)]
+          (if (str/blank? value)
+            {:error "Missing value for --test-command." :usage usage-summary}
+            (recur (rest rest-args) source-path lines timeout-factor value max-workers))
+          {:error "Missing value for --test-command." :usage usage-summary})
+
+        (= "--max-workers" arg)
+        (if-let [value (first rest-args)]
+          (let [n (parse-long value)]
+            (if (and n (pos? n))
+              (recur (rest rest-args) source-path lines timeout-factor test-command n)
+              {:error "Invalid value for --max-workers. Expected a positive integer."
+               :usage usage-summary}))
+          {:error "Missing value for --max-workers." :usage usage-summary})
+
+        (str/starts-with? arg "--")
+        {:error (str "Unknown option: " arg) :usage usage-summary}
+
+        source-path
+        {:error (str "Unexpected extra argument: " arg) :usage usage-summary}
+
+        :else
+        (recur rest-args arg lines timeout-factor test-command max-workers)))))
 
 (defn- print-progress [i total result site]
   (println (format "[%3d/%d] %-8s  L%-4d %s"
@@ -214,10 +281,11 @@
 (defn run-mutations-parallel
   "Run all mutation sites in parallel using worker directories.
    Returns results sorted by site index."
-  [sites source-path original-content timeout-ms]
+  [sites source-path original-content timeout-ms max-workers test-command]
   (let [run-base-dir (workers/new-run-base-dir worker-root-dir)
-        n-workers (min (count sites)
-                       (.availableProcessors (Runtime/getRuntime)))
+        n-workers (max 1 (min (count sites)
+                              (.availableProcessors (Runtime/getRuntime))
+                              (or max-workers Integer/MAX_VALUE)))
         worker-dirs (workers/create-worker-dirs!
                       run-base-dir source-path original-content n-workers)
         queue (java.util.concurrent.LinkedBlockingQueue. ^java.util.Collection (vec sites))
@@ -231,7 +299,8 @@
                       (loop []
                         (when-let [site (.poll queue)]
                           (let [r (mutate-and-test-in-dir dir source-path
-                                                          original-content site timeout-ms)
+                                                          original-content site timeout-ms
+                                                          test-command)
                                 n (swap! counter inc)]
                             (.add results r)
                             (locking lock
@@ -277,9 +346,13 @@
 
 (defn run-mutation-testing
   "Run mutation testing on a single source file.
-   Optional lines arg: set of line numbers to restrict testing to."
-  ([source-path] (run-mutation-testing source-path nil))
-  ([source-path lines]
+   Optional lines arg: set of line numbers to restrict testing to.
+   Optional timeout-factor arg: positive integer multiplier for mutation timeout.
+   Optional test-command arg: command string for running tests.
+   Optional max-workers arg: positive integer worker cap."
+  ([source-path] (run-mutation-testing source-path nil 10 "clj -M:spec" nil))
+  ([source-path lines] (run-mutation-testing source-path lines 10 "clj -M:spec" nil))
+  ([source-path lines timeout-factor test-command max-workers]
    (when (restore-from-backup! source-path)
      (println "Restored source from backup (previous run was interrupted)."))
    (let [original-content (slurp source-path)
@@ -302,8 +375,8 @@
                         (str/join "," (sort lines)) (count sites))))
      (println)
      (print "Baseline: ") (flush)
-     (let [{baseline-result :result elapsed-ms :elapsed-ms} (runner/run-specs-timed)
-           timeout-ms (* 10 elapsed-ms)]
+     (let [{baseline-result :result elapsed-ms :elapsed-ms} (runner/run-specs-timed test-command)
+           timeout-ms (* timeout-factor elapsed-ms)]
        (if (= :survived baseline-result)
          (do
            (println (format "PASS (%.1fs, timeout %.1fs)"
@@ -312,7 +385,8 @@
            (save-backup! source-path analysis-content)
            (try
              (let [results (run-mutations-parallel sites source-path
-                                                    analysis-content timeout-ms)
+                                                   analysis-content timeout-ms
+                                                   max-workers test-command)
                    killed (count (filter #(= :killed (:result %)) results))
                    total (count results)
                    pct (if (zero? total) 0.0 (* 100.0 (/ killed total)))
@@ -326,8 +400,20 @@
 
 (defn -main [& args]
   (let [validated (validate-args (vec args))]
-    (if (:error validated)
-      (do (println (:error validated))
-          (System/exit 1))
+    (cond
+      (:help validated)
+      (println (:usage validated))
+
+      (:error validated)
+      (do
+        (println (:error validated))
+        (println)
+        (print (:usage validated))
+        (System/exit 1))
+
+      :else
       (run-mutation-testing (:source-path validated)
-                            (:lines validated)))))
+                            (:lines validated)
+                            (:timeout-factor validated)
+                            (:test-command validated)
+                            (:max-workers validated)))))

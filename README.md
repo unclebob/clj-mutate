@@ -23,11 +23,23 @@ clj -M:mutate src/myapp/foo.cljc
 
 # Retest only specific lines (e.g. survivors from a previous run)
 clj -M:mutate src/myapp/foo.cljc --lines 45,67,89
+
+# Limit parallel worker count
+clj -M:mutate src/myapp/foo.cljc --max-workers 4
+
+# Use a custom infinite-loop timeout multiplier (baseline factor)
+clj -M:mutate src/myapp/foo.cljc --timeout-factor 15
+
+# Use a custom test command (quote commands containing spaces)
+clj -M:mutate src/myapp/foo.cljc --test-command "clj -M:all-tests"
+
+# Show command usage help
+clj -M:mutate --help
 ```
 
 The tool automatically:
 - Runs a baseline test (`clj -M:spec`) to verify all specs pass unmodified
-- Applies each mutation, runs all specs with a timeout (10x baseline)
+- Applies each mutation, runs all specs with a timeout (`--timeout-factor`, default 10x baseline)
 - Restores the original file after each mutation
 - Stamps the source with `;; mutation-tested: YYYY-MM-DD` on full runs
 

@@ -65,12 +65,12 @@
           temp-path (.getPath temp-file)
           original-content "(ns test-ns)\n(defn foo [] (+ 1 2))\n"]
       (spit temp-path original-content)
-      (with-redefs [runner/run-specs (fn [_] :killed)]
+      (with-redefs [runner/run-specs (fn [& _] :killed)]
         (let [forms (core/read-source-forms original-content)
               sites (core/discover-all-mutations forms)
               plus-site (first (filter #(= (:original %) '+) sites))
               result (core/mutate-and-test temp-path original-content
-                                           forms plus-site 30000)]
+                                           forms plus-site 30000 "clj -M:spec")]
           (should= :killed (:result result))
           (should= original-content (slurp temp-path))))
       (.delete temp-file))))
@@ -79,6 +79,11 @@
   (it "returns error when no args given"
     (let [result (core/validate-args [])]
       (should-contain :error result)))
+
+  (it "returns help when --help is provided"
+    (let [result (core/validate-args ["--help"])]
+      (should= true (:help result))
+      (should-contain "Usage:" (:usage result))))
 
   (it "returns error when source file doesn't exist"
     (let [result (core/validate-args ["nonexistent.cljc"])]
@@ -89,6 +94,44 @@
       (spit temp "(ns test-ns)")
       (let [result (core/validate-args [(.getPath temp)])]
         (should= (.getPath temp) (:source-path result))
+        (should= 10 (:timeout-factor result))
+        (should= "clj -M:spec" (:test-command result))
+        (should= nil (:max-workers result))
+        (.delete temp))))
+
+  (it "parses --timeout-factor as a positive integer"
+    (let [temp (java.io.File/createTempFile "src" ".cljc")]
+      (spit temp "(ns test-ns)")
+      (let [result (core/validate-args [(.getPath temp) "--timeout-factor" "7"])]
+        (should= 7 (:timeout-factor result))
+        (.delete temp))))
+
+  (it "returns an error for non-positive --timeout-factor"
+    (let [temp (java.io.File/createTempFile "src" ".cljc")]
+      (spit temp "(ns test-ns)")
+      (let [result (core/validate-args [(.getPath temp) "--timeout-factor" "0"])]
+        (should-contain :error result)
+        (.delete temp))))
+
+  (it "parses --test-command"
+    (let [temp (java.io.File/createTempFile "src" ".cljc")]
+      (spit temp "(ns test-ns)")
+      (let [result (core/validate-args [(.getPath temp) "--test-command" "clj -M:all-tests"])]
+        (should= "clj -M:all-tests" (:test-command result))
+        (.delete temp))))
+
+  (it "parses --max-workers as a positive integer"
+    (let [temp (java.io.File/createTempFile "src" ".cljc")]
+      (spit temp "(ns test-ns)")
+      (let [result (core/validate-args [(.getPath temp) "--max-workers" "3"])]
+        (should= 3 (:max-workers result))
+        (.delete temp))))
+
+  (it "returns an error for non-positive --max-workers"
+    (let [temp (java.io.File/createTempFile "src" ".cljc")]
+      (spit temp "(ns test-ns)")
+      (let [result (core/validate-args [(.getPath temp) "--max-workers" "0"])]
+        (should-contain :error result)
         (.delete temp)))))
 
 (describe "partition-by-coverage"
@@ -172,12 +215,16 @@
           original "(ns test-ns)\n(defn foo [] (+ 1 2))\n"]
       (spit temp-path original)
       (with-redefs [runner/run-specs (fn [& _] :killed)
-                    runner/run-specs-timed (fn [] {:result :survived :elapsed-ms 100})
+                    runner/run-specs-timed (fn [cmd]
+                                             (should= "clj -M:spec" cmd)
+                                             {:result :survived :elapsed-ms 100})
                     coverage/load-coverage (fn [_] nil)
                     core/run-mutations-parallel
-                    (fn [sites source-path content timeout-ms]
+                    (fn [sites source-path content timeout-ms max-workers test-command]
+                      (should= nil max-workers)
+                      (should= "clj -M:spec" test-command)
                       (doall (map (fn [site]
-                                    (core/mutate-and-test source-path content nil site timeout-ms))
+                                    (core/mutate-and-test source-path content nil site timeout-ms test-command))
                                   sites)))]
         (core/run-mutation-testing temp-path)
         (let [stamped (slurp temp-path)]
@@ -190,16 +237,43 @@
           original ";; mutation-tested: 2026-01-15\n(ns test-ns)\n(defn foo [] (+ 1 2))\n"]
       (spit temp-path original)
       (with-redefs [runner/run-specs (fn [& _] :killed)
-                    runner/run-specs-timed (fn [] {:result :survived :elapsed-ms 100})
+                    runner/run-specs-timed (fn [cmd]
+                                             (should= "clj -M:spec" cmd)
+                                             {:result :survived :elapsed-ms 100})
                     coverage/load-coverage (fn [_] nil)
                     core/run-mutations-parallel
-                    (fn [sites source-path content timeout-ms]
+                    (fn [sites source-path content timeout-ms max-workers test-command]
+                      (should= nil max-workers)
+                      (should= "clj -M:spec" test-command)
                       (doall (map (fn [site]
-                                    (core/mutate-and-test source-path content nil site timeout-ms))
+                                    (core/mutate-and-test source-path content nil site timeout-ms test-command))
                                   sites)))]
         (let [captured (with-out-str
                          (core/run-mutation-testing temp-path))]
           (should-contain "Previous mutation test: 2026-01-15" captured)))
+      (.delete temp-file))))
+
+(describe "run-mutation-testing options"
+  (it "uses timeout-factor and test-command"
+    (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
+          temp-path (.getPath temp-file)
+          original "(ns test-ns)\n(defn foo [] (+ 1 2))\n"
+          captured-timeout (atom nil)
+          captured-command (atom nil)]
+      (spit temp-path original)
+      (with-redefs [runner/run-specs (fn [& _] :killed)
+                    runner/run-specs-timed (fn [cmd]
+                                             (reset! captured-command cmd)
+                                             {:result :survived :elapsed-ms 200})
+                    coverage/load-coverage (fn [_] nil)
+                    core/run-mutations-parallel
+                    (fn [sites _ _ timeout-ms _ test-command]
+                      (reset! captured-timeout timeout-ms)
+                      (reset! captured-command test-command)
+                      (mapv (fn [site] {:site site :result :killed :timeout? false}) sites))]
+        (core/run-mutation-testing temp-path nil 3 "clj -M:all-tests" nil)
+        (should= 600 @captured-timeout)
+        (should= "clj -M:all-tests" @captured-command))
       (.delete temp-file))))
 
 (describe "line numbers stable across stamp"
@@ -209,13 +283,16 @@
           original "(ns test-ns)\n(defn foo [] (+ 1 2))\n"]
       (spit temp-path original)
       (with-redefs [runner/run-specs (fn [& _] :survived)
-                    runner/run-specs-timed (fn [] {:result :survived :elapsed-ms 100})
+                    runner/run-specs-timed (fn [cmd]
+                                             (should= "clj -M:spec" cmd)
+                                             {:result :survived :elapsed-ms 100})
                     coverage/load-coverage (fn [_] nil)
                     core/run-mutations-parallel
-                    (fn [sites source-path content timeout-ms]
+                    (fn [sites source-path content timeout-ms max-workers test-command]
+                      (should= nil max-workers)
                       (let [results (doall (map-indexed
                                              (fn [i site]
-                                               (let [r (core/mutate-and-test source-path content nil site timeout-ms)]
+                                               (let [r (core/mutate-and-test source-path content nil site timeout-ms test-command)]
                                                  (#'core/print-progress i (count sites) r site)
                                                  r))
                                              sites))]
@@ -245,13 +322,14 @@
           sites (core/discover-all-mutations forms)
           plus-site (first (filter #(= (:original %) '+) sites))
           received-dir (atom nil)]
-      (with-redefs [runner/run-specs (fn [timeout dir]
+      (with-redefs [runner/run-specs (fn [timeout dir cmd]
+                                       (should= "clj -M:spec" cmd)
                                        (reset! received-dir dir)
                                        ;; Verify mutated content is on disk
                                        (should-contain "(- 1 2)" (slurp (.getPath source-file)))
                                        :killed)]
         (let [result (core/mutate-and-test-in-dir worker-path source-rel
-                                                   original-content plus-site 30000)]
+                                                   original-content plus-site 30000 "clj -M:spec")]
           (should= :killed (:result result))
           (should= worker-path @received-dir)
           ;; Original content should be restored
@@ -276,7 +354,7 @@
                  {:index 2 :original '= :mutant 'not= :line 9 :description "= -> not="}]
           call-count (atom 0)]
       (with-redefs [core/mutate-and-test-in-dir
-                    (fn [_ _ _ site _]
+                    (fn [_ _ _ site _ _]
                       (swap! call-count inc)
                       {:site site :result :killed :timeout? false})
                     workers/new-run-base-dir
@@ -287,7 +365,7 @@
                       (vec (repeat n "target/fake-worker")))
                     workers/cleanup-worker-dirs! (fn [_] nil)]
         (let [results (core/run-mutations-parallel
-                        sites "src/foo.cljc" "(ns foo)" 30000)]
+                        sites "src/foo.cljc" "(ns foo)" 30000 nil "clj -M:spec")]
           (should= 3 (count results))
           (should= 3 @call-count)
           ;; Results sorted by index
@@ -300,7 +378,7 @@
                        {:index i :original '+ :mutant '- :line (+ 5 i)
                         :description (str "mut-" i)}))]
       (with-redefs [core/mutate-and-test-in-dir
-                    (fn [_ _ _ site _]
+                    (fn [_ _ _ site _ _]
                       {:site site :result :killed :timeout? false})
                     workers/new-run-base-dir
                     (fn [root] (str root "/run-test"))
@@ -310,8 +388,26 @@
                       (vec (repeat n "target/fake-worker")))
                     workers/cleanup-worker-dirs! (fn [_] nil)]
         (let [results (core/run-mutations-parallel
-                        sites "src/foo.cljc" "(ns foo)" 30000)]
+                        sites "src/foo.cljc" "(ns foo)" 30000 nil "clj -M:spec")]
           (should= 10 (count results))
-          (should= (vec (range 10)) (mapv #(:index (:site %)) results)))))))
+          (should= (vec (range 10)) (mapv #(:index (:site %)) results))))))
+
+  (it "limits worker directory count when max-workers is provided"
+    (let [sites (vec (for [i (range 5)]
+                       {:index i :original '+ :mutant '- :line (+ 5 i)
+                        :description (str "mut-" i)}))
+          created-workers (atom nil)]
+      (with-redefs [core/mutate-and-test-in-dir
+                    (fn [_ _ _ site _ _]
+                      {:site site :result :killed :timeout? false})
+                    workers/new-run-base-dir
+                    (fn [root] (str root "/run-test"))
+                    workers/create-worker-dirs!
+                    (fn [_ _ _ n]
+                      (reset! created-workers n)
+                      (vec (repeat n "target/fake-worker")))
+                    workers/cleanup-worker-dirs! (fn [_] nil)]
+        (core/run-mutations-parallel sites "src/foo.cljc" "(ns foo)" 30000 2 "clj -M:spec")
+        (should= 2 @created-workers)))))
 
 (run-specs)
