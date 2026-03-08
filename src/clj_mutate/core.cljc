@@ -105,23 +105,25 @@
 
 (defn mutate-source-text
   "Replace a single token in the original source text, preserving formatting.
-   Uses :line and :column from the mutation site to target the right occurrence."
+   Uses :line and :column from the mutation site to target the right occurrence.
+   Falls back to global first-match when :line is nil."
   [original-content site]
-  (let [lines (str/split original-content #"\n" -1)
-        line-idx (dec (:line site))
-        line (nth lines line-idx)
-        pat (token-pattern (:original site))
-        col (:column site)
-        replaced (if col
-                   (let [search-start (max 0 (- col 2))
-                         prefix (subs line 0 search-start)
-                         suffix (subs line search-start)
-                         new-suffix (str/replace-first suffix pat (str (:mutant site)))]
-                     (str prefix new-suffix))
-                   (str/replace-first line pat (str (:mutant site))))
-        new-lines (assoc lines line-idx replaced)
-        result (str/join "\n" new-lines)]
-    result))
+  (let [pat (token-pattern (:original site))]
+    (if-let [line-num (:line site)]
+      (let [lines (str/split original-content #"\n" -1)
+            line-idx (dec line-num)
+            line (nth lines line-idx)
+            col (:column site)
+            replaced (if col
+                       (let [search-start (max 0 (- col 2))
+                             prefix (subs line 0 search-start)
+                             suffix (subs line search-start)
+                             new-suffix (str/replace-first suffix pat (str (:mutant site)))]
+                         (str prefix new-suffix))
+                       (str/replace-first line pat (str (:mutant site))))
+            new-lines (assoc lines line-idx replaced)]
+        (str/join "\n" new-lines))
+      (str/replace-first original-content pat (str (:mutant site))))))
 
 (defn mutate-and-test
   "Apply one mutation, write file, run all specs, restore original.
