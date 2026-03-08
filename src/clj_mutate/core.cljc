@@ -214,6 +214,18 @@
                    (:description site)))
   (flush))
 
+(defn run-mutations-serial
+  "Run all mutation sites sequentially.
+   Returns results sorted by site index."
+  [sites source-path original-content timeout-ms]
+  (vec
+    (map-indexed
+      (fn [i site]
+        (let [r (mutate-and-test source-path original-content nil site timeout-ms)]
+          (print-progress i (count sites) r site)
+          r))
+      sites)))
+
 (defn run-mutations-parallel
   "Run all mutation sites in parallel using worker directories.
    Returns results sorted by site index."
@@ -231,15 +243,19 @@
         futures (mapv
                   (fn [dir]
                     (future
-                      (loop []
-                        (when-let [site (.poll queue)]
-                          (let [r (mutate-and-test-in-dir dir source-path
-                                                          original-content site timeout-ms)
-                                n (swap! counter inc)]
-                            (swap! results conj r)
-                            (locking lock
-                              (print-progress (dec n) total r site))
-                            (recur))))))
+                      (try
+                        (loop []
+                          (when-let [site (.poll queue)]
+                            (let [r (mutate-and-test-in-dir dir source-path
+                                                            original-content site timeout-ms)
+                                  n (swap! counter inc)]
+                              (swap! results conj r)
+                              (locking lock
+                                (print-progress (dec n) total r site))
+                              (recur))))
+                        (catch Exception e
+                          (locking lock
+                            (println (str "Worker error: " (.getMessage e))))))))
                   worker-dirs)]
     (try
       (run! deref futures)
@@ -313,9 +329,12 @@
                             (/ elapsed-ms 1000.0) (/ timeout-ms 1000.0)))
            (when-not lines (print-uncovered uncovered))
            (save-backup! source-path analysis-content)
-           (try
-             (let [results (run-mutations-parallel sites source-path
-                                                    analysis-content timeout-ms)
+            (try
+              (let [run-fn (if (project/bb-project?)
+                             run-mutations-serial
+                             run-mutations-parallel)
+                    results (run-fn sites source-path
+                                    analysis-content timeout-ms)
                    killed (count (filter #(= :killed (:result %)) results))
                    total (count results)
                    pct (if (zero? total) 0.0 (* 100.0 (/ killed total)))
