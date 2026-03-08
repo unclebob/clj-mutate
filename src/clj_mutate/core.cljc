@@ -4,6 +4,7 @@
             [clojure.tools.reader.reader-types :as reader-types]
             [clj-mutate.coverage :as coverage]
             [clj-mutate.mutations :as mutations]
+            [clj-mutate.project :as project]
             [clj-mutate.runner :as runner]
             [clj-mutate.workers :as workers])
   (:import [java.io File]))
@@ -195,7 +196,9 @@
   [args]
   (cond
     (empty? args)
-    {:error "Usage: clj -M:mutate <source-file.cljc> [--lines L1,L2,...]"}
+    {:error (str "Usage: "
+                 (if (project/bb-project?) "bb mutate" "clj -M:mutate")
+                 " <source-file.cljc> [--lines L1,L2,...]")}
 
     (not (.exists (File. (first args))))
     {:error (str "Source file not found: " (first args))}

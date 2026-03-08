@@ -59,6 +59,7 @@
 (describe "load-coverage"
   (it "runs coverage when lcov.info is missing"
     (let [ran? (atom false)
+          result (atom nil)
           temp-lcov (str "/tmp/test-lcov-" (System/nanoTime) ".info")]
       (with-redefs [cov/run-coverage! (fn [] (reset! ran? true)
                                         (spit temp-lcov sample-lcov)
@@ -66,17 +67,18 @@
                     cov/lcov-path (constantly temp-lcov)]
         (java.nio.file.Files/deleteIfExists
           (.toPath (java.io.File. temp-lcov)))
-        (let [result (cov/load-coverage "src/empire/combat.cljc")]
-          (should @ran?)
-          (should= #{1 3 5} result)))))
+        (with-out-str (reset! result (cov/load-coverage "src/empire/combat.cljc")))
+        (should @ran?)
+        (should= #{1 3 5} @result))))
 
   (it "returns nil when lcov.info does not exist and coverage fails"
-    (let [temp-lcov (str "/tmp/nonexistent-lcov-" (System/nanoTime) ".info")]
+    (let [result (atom nil)
+          temp-lcov (str "/tmp/nonexistent-lcov-" (System/nanoTime) ".info")]
       (with-redefs [cov/run-coverage! (fn [] false)
                     cov/lcov-path (constantly temp-lcov)]
         (java.nio.file.Files/deleteIfExists
           (.toPath (java.io.File. temp-lcov)))
-        (should-be-nil (cov/load-coverage "src/empire/combat.cljc")))))
-  )
+        (with-out-str (reset! result (cov/load-coverage "src/empire/combat.cljc")))
+        (should-be-nil @result)))))
 
 (run-specs)

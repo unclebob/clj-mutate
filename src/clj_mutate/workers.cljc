@@ -1,4 +1,5 @@
 (ns clj-mutate.workers
+  (:require [clj-mutate.project :as project])
   (:import [java.io File]
            [java.util UUID]
            [java.nio.file Files Paths]))
@@ -25,23 +26,29 @@
 
 (defn create-worker-dirs!
   "Create n worker directories under base-dir. Each gets symlinks to
-   deps.edn, spec/, .cpcache/ (if present), and a real copy of the
-   source file at source-rel-path."
+   the project config (bb.edn or deps.edn), spec/, cache dirs, and a
+   real copy of the source file at source-rel-path."
   [base-dir source-rel-path original-content n]
-  (let [project-root (System/getProperty "user.dir")]
+  (let [project-root (System/getProperty "user.dir")
+        config (project/config-file project-root)
+        bb? (project/bb-project? project-root)]
     (vec
       (for [i (range n)]
         (let [dir-path (str base-dir "/worker-" i)
               dir (File. dir-path)
               source-file (File. dir source-rel-path)]
           (.mkdirs (.getParentFile source-file))
-          (symlink! (str dir-path "/deps.edn")
-                    (str project-root "/deps.edn"))
+          (symlink! (str dir-path "/" config)
+                    (str project-root "/" config))
           (symlink! (str dir-path "/spec")
                     (str project-root "/spec"))
-          (when (.exists (File. (str project-root "/.cpcache")))
-            (symlink! (str dir-path "/.cpcache")
-                      (str project-root "/.cpcache")))
+          (if bb?
+            (when (.exists (File. (str project-root "/.babashka")))
+              (symlink! (str dir-path "/.babashka")
+                        (str project-root "/.babashka")))
+            (when (.exists (File. (str project-root "/.cpcache")))
+              (symlink! (str dir-path "/.cpcache")
+                        (str project-root "/.cpcache"))))
           (spit (.getPath source-file) original-content)
           dir-path)))))
 
