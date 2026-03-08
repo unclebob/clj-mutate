@@ -4,6 +4,7 @@
             [clojure.tools.reader.reader-types :as reader-types]
             [clj-mutate.coverage :as coverage]
             [clj-mutate.mutations :as mutations]
+            [clj-mutate.project :as project]
             [clj-mutate.runner :as runner]
             [clj-mutate.workers :as workers])
   (:import [java.io File]))
@@ -104,23 +105,25 @@
 
 (defn mutate-source-text
   "Replace a single token in the original source text, preserving formatting.
-   Uses :line and :column from the mutation site to target the right occurrence."
+   Uses :line and :column from the mutation site to target the right occurrence.
+   Falls back to global first-match when :line is nil."
   [original-content site]
-  (let [lines (str/split original-content #"\n" -1)
-        line-idx (dec (:line site))
-        line (nth lines line-idx)
-        pat (token-pattern (:original site))
-        col (:column site)
-        replaced (if col
-                   (let [search-start (max 0 (- col 2))
-                         prefix (subs line 0 search-start)
-                         suffix (subs line search-start)
-                         new-suffix (str/replace-first suffix pat (str (:mutant site)))]
-                     (str prefix new-suffix))
-                   (str/replace-first line pat (str (:mutant site))))
-        new-lines (assoc lines line-idx replaced)
-        result (str/join "\n" new-lines)]
-    result))
+  (let [pat (token-pattern (:original site))]
+    (if-let [line-num (:line site)]
+      (let [lines (str/split original-content #"\n" -1)
+            line-idx (dec line-num)
+            line (nth lines line-idx)
+            col (:column site)
+            replaced (if col
+                       (let [search-start (max 0 (- col 2))
+                             prefix (subs line 0 search-start)
+                             suffix (subs line search-start)
+                             new-suffix (str/replace-first suffix pat (str (:mutant site)))]
+                         (str prefix new-suffix))
+                       (str/replace-first line pat (str (:mutant site))))
+            new-lines (assoc lines line-idx replaced)]
+        (str/join "\n" new-lines))
+      (str/replace-first original-content pat (str (:mutant site))))))
 
 (defn mutate-and-test
   "Apply one mutation, write file, run all specs, restore original.
@@ -195,7 +198,9 @@
   [args]
   (cond
     (empty? args)
-    {:error "Usage: clj -M:mutate <source-file.cljc> [--lines L1,L2,...]"}
+    {:error (str "Usage: "
+                 (if (project/bb-project?) "bb mutate" "clj -M:mutate")
+                 " <source-file.cljc> [--lines L1,L2,...]")}
 
     (not (.exists (File. (first args))))
     {:error (str "Source file not found: " (first args))}
@@ -211,6 +216,18 @@
                    (:description site)))
   (flush))
 
+(defn run-mutations-serial
+  "Run all mutation sites sequentially.
+   Returns results sorted by site index."
+  [sites source-path original-content timeout-ms]
+  (vec
+    (map-indexed
+      (fn [i site]
+        (let [r (mutate-and-test source-path original-content nil site timeout-ms)]
+          (print-progress i (count sites) r site)
+          r))
+      sites)))
+
 (defn run-mutations-parallel
   "Run all mutation sites in parallel using worker directories.
    Returns results sorted by site index."
@@ -221,26 +238,30 @@
         worker-dirs (workers/create-worker-dirs!
                       run-base-dir source-path original-content n-workers)
         queue (java.util.concurrent.LinkedBlockingQueue. ^java.util.Collection (vec sites))
-        results (java.util.concurrent.ConcurrentLinkedQueue.)
+        results (atom [])
         counter (atom 0)
         total (count sites)
         lock (Object.)
         futures (mapv
                   (fn [dir]
                     (future
-                      (loop []
-                        (when-let [site (.poll queue)]
-                          (let [r (mutate-and-test-in-dir dir source-path
-                                                          original-content site timeout-ms)
-                                n (swap! counter inc)]
-                            (.add results r)
-                            (locking lock
-                              (print-progress (dec n) total r site))
-                            (recur))))))
+                      (try
+                        (loop []
+                          (when-let [site (.poll queue)]
+                            (let [r (mutate-and-test-in-dir dir source-path
+                                                            original-content site timeout-ms)
+                                  n (swap! counter inc)]
+                              (swap! results conj r)
+                              (locking lock
+                                (print-progress (dec n) total r site))
+                              (recur))))
+                        (catch Exception e
+                          (locking lock
+                            (println (str "Worker error: " (.getMessage e))))))))
                   worker-dirs)]
     (try
       (run! deref futures)
-      (vec (sort-by #(:index (:site %)) results))
+      (vec (sort-by #(:index (:site %)) @results))
       (finally
         (workers/cleanup-worker-dirs! run-base-dir)))))
 
@@ -310,9 +331,9 @@
                             (/ elapsed-ms 1000.0) (/ timeout-ms 1000.0)))
            (when-not lines (print-uncovered uncovered))
            (save-backup! source-path analysis-content)
-           (try
-             (let [results (run-mutations-parallel sites source-path
-                                                    analysis-content timeout-ms)
+            (try
+               (let [results (run-mutations-parallel sites source-path
+                                                      analysis-content timeout-ms)
                    killed (count (filter #(= :killed (:result %)) results))
                    total (count results)
                    pct (if (zero? total) 0.0 (* 100.0 (/ killed total)))

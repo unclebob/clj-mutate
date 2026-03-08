@@ -1,16 +1,19 @@
 ;; mutation-tested: 2026-02-27
 (ns clj-mutate.runner
+  (:require [clj-mutate.project :as project])
   (:import [java.util.concurrent TimeUnit]))
 
 (defn run-specs
-  "Run all specs via clj -M:spec. Returns :killed, :survived, or :timeout.
+  "Run all specs. Returns :killed, :survived, or :timeout.
+   Uses bb or clj depending on project type.
    Optional timeout-ms: kill process after this many milliseconds.
    Optional dir: run specs in the given directory.
    A timeout indicates an infinite loop — treated as :killed by caller."
   ([] (run-specs nil nil))
   ([timeout-ms] (run-specs timeout-ms nil))
   ([timeout-ms dir]
-   (let [pb (doto (ProcessBuilder. ^java.util.List ["clj" "-M:spec"])
+   (let [cmd (project/spec-command (or dir (System/getProperty "user.dir")))
+         pb (doto (ProcessBuilder. ^java.util.List cmd)
               (.redirectErrorStream true))
          _ (when dir (.directory pb (java.io.File. dir)))
          process (.start pb)

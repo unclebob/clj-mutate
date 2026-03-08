@@ -53,7 +53,31 @@
               (should (Files/isSymbolicLink (.toPath cp-link)))
               (should-not (.exists cp-link))))
           (finally
-            (workers/cleanup-worker-dirs! base-dir)))))))
+            (workers/cleanup-worker-dirs! base-dir))))))
+
+  (it "creates source overlay with symlinked siblings"
+    (let [base-dir "target/test-workers-overlay"
+          source-rel "src/clj_mutate/core.cljc"
+          content "(ns clj-mutate.core)\n"
+          dirs (workers/create-worker-dirs! base-dir source-rel content 1)]
+      (try
+        (let [dir (first dirs)
+              src-dir (File. (str dir "/src"))]
+          ;; src/ should be a real directory, not a symlink
+          (should (.isDirectory src-dir))
+          (should-not (Files/isSymbolicLink (.toPath src-dir)))
+          ;; The mutated file should be a real file
+          (should (.isFile (File. (str dir "/" source-rel))))
+          (should-not (Files/isSymbolicLink (.toPath (File. (str dir "/" source-rel)))))
+          (should= content (slurp (str dir "/" source-rel)))
+          ;; Sibling source files should be symlinks
+          (let [siblings (.listFiles (File. (str dir "/src/clj_mutate")))
+                non-mutated (filter #(not= "core.cljc" (.getName %)) siblings)]
+            (should (pos? (count non-mutated)))
+            (doseq [s non-mutated]
+              (should (Files/isSymbolicLink (.toPath s))))))
+        (finally
+          (workers/cleanup-worker-dirs! base-dir))))))
 
 (describe "cleanup-worker-dirs!"
   (it "removes the base directory and all contents"

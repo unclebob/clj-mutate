@@ -1,6 +1,7 @@
 (ns clj-mutate.coverage
   (:require [clojure.string :as str]
-            [clojure.java.shell :as shell])
+            [clojure.java.shell :as shell]
+            [clj-mutate.project :as project])
   (:import [java.io File]))
 
 (defn parse-lcov
@@ -73,15 +74,21 @@
     :else nil))
 
 (defn load-coverage
-  "Orchestrator: run coverage if lcov.info missing/stale, parse, return covered lines."
+  "Orchestrator: run coverage if lcov.info missing/stale, parse, return covered lines.
+   For babashka projects, Cloverage is not available so coverage is only used
+   if an lcov.info file already exists."
   [source-path]
   (let [lcov-file (File. (lcov-path))]
-    (when-let [reason (stale-reason lcov-file source-path)]
-      (println
-        (case reason
-          :missing "Coverage file missing; regenerating LCOV with clj -M:cov --lcov."
-          :stale "Coverage file is stale; regenerating LCOV with clj -M:cov --lcov."))
-      (when-not (run-coverage!)
-        (println "Coverage refresh failed; continuing with existing coverage if available.")))
-    (when (.exists lcov-file)
-      (covered-lines (parse-lcov (slurp lcov-file)) source-path))))
+    (if (project/bb-project?)
+      (when (.exists lcov-file)
+        (covered-lines (parse-lcov (slurp lcov-file)) source-path))
+      (do
+        (when-let [reason (stale-reason lcov-file source-path)]
+          (println
+            (case reason
+              :missing "Coverage file missing; regenerating LCOV with clj -M:cov --lcov."
+              :stale "Coverage file is stale; regenerating LCOV with clj -M:cov --lcov."))
+          (when-not (run-coverage!)
+            (println "Coverage refresh failed; continuing with existing coverage if available.")))
+        (when (.exists lcov-file)
+          (covered-lines (parse-lcov (slurp lcov-file)) source-path))))))

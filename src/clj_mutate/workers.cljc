@@ -1,4 +1,5 @@
 (ns clj-mutate.workers
+  (:require [clj-mutate.project :as project])
   (:import [java.io File]
            [java.util UUID]
            [java.nio.file Files Paths]))
@@ -23,26 +24,60 @@
           (delete-recursive! child))))
     (.delete f)))
 
+(defn- setup-source-overlay!
+  "Create a source tree overlay in the worker directory. The first
+   segment of source-rel-path (e.g. \"src\") becomes a real directory
+   in the worker. From there, each directory level along the path to
+   the mutated file is a real directory with symlinks to siblings.
+   The mutated file itself is a real file; everything else in the
+   source tree is a symlink back to the original project."
+  [worker-path project-root source-rel-path original-content]
+  (let [segments (clojure.string/split source-rel-path #"/")
+        source-file (File. worker-path source-rel-path)]
+    (.mkdirs (.getParentFile source-file))
+    ;; Start from the first segment (e.g. "src"), symlink siblings
+    ;; at each directory level down to the mutated file
+    (loop [depth 0 rel-path (first segments)]
+      (let [next-depth (inc depth)]
+        (when (< next-depth (count segments))
+          (let [next-segment (nth segments next-depth)
+                abs-dir (str project-root "/" rel-path)
+                worker-dir (str worker-path "/" rel-path)
+                real-dir (File. abs-dir)]
+            (when (.isDirectory real-dir)
+              (doseq [child (.listFiles real-dir)]
+                (let [child-name (.getName child)]
+                  (when (not= child-name next-segment)
+                    (symlink! (str worker-dir "/" child-name)
+                              (.getPath child))))))
+            (recur next-depth (str rel-path "/" next-segment))))))
+    (spit (.getPath source-file) original-content)))
+
 (defn create-worker-dirs!
   "Create n worker directories under base-dir. Each gets symlinks to
-   deps.edn, spec/, .cpcache/ (if present), and a real copy of the
-   source file at source-rel-path."
+   the project config (bb.edn or deps.edn), spec/, cache dirs, and a
+   source tree overlay where only the mutated file is a real file."
   [base-dir source-rel-path original-content n]
-  (let [project-root (System/getProperty "user.dir")]
+  (let [project-root (System/getProperty "user.dir")
+        config (project/config-file project-root)
+        bb? (project/bb-project? project-root)]
     (vec
       (for [i (range n)]
-        (let [dir-path (str base-dir "/worker-" i)
-              dir (File. dir-path)
-              source-file (File. dir source-rel-path)]
-          (.mkdirs (.getParentFile source-file))
-          (symlink! (str dir-path "/deps.edn")
-                    (str project-root "/deps.edn"))
+        (let [dir-path (str base-dir "/worker-" i)]
+          (.mkdirs (File. dir-path))
+          (symlink! (str dir-path "/" config)
+                    (str project-root "/" config))
           (symlink! (str dir-path "/spec")
                     (str project-root "/spec"))
-          (when (.exists (File. (str project-root "/.cpcache")))
-            (symlink! (str dir-path "/.cpcache")
-                      (str project-root "/.cpcache")))
-          (spit (.getPath source-file) original-content)
+          (if bb?
+            (when (.exists (File. (str project-root "/.babashka")))
+              (symlink! (str dir-path "/.babashka")
+                        (str project-root "/.babashka")))
+            (when (.exists (File. (str project-root "/.cpcache")))
+              (symlink! (str dir-path "/.cpcache")
+                        (str project-root "/.cpcache"))))
+          (setup-source-overlay! dir-path project-root
+                                  source-rel-path original-content)
           dir-path)))))
 
 (defn cleanup-worker-dirs!
