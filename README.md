@@ -43,6 +43,35 @@ The tool automatically:
 - Restores the original file after each mutation
 - Stamps the source with `;; mutation-tested: YYYY-MM-DD` on full runs
 
+## Recommended Workflow
+
+Run mutation testing one file at a time.
+
+Before running specs, run [speclj-structure-check](https://github.com/unclebob/speclj-structure-check). A project can also wire this into its `:spec` alias so structure validation runs before Speclj.
+
+```bash
+clj -M:spec
+```
+
+Then mutate exactly one source file with `--max-workers 3`:
+
+```bash
+clj -M:mutate src/myapp/foo.cljc --max-workers 3
+```
+
+Workflow rules:
+- Mutate only one file at a time.
+- Before moving to the next file, cover every uncovered mutation in the current file.
+- Before moving to the next file, kill every surviving mutation in the current file.
+- `clj-mutate` uses LCOV coverage data and regenerates it when stale or missing.
+
+Recommended loop for each file:
+1. Run `clj -M:mutate path/to/file.clj --max-workers 3`.
+2. If any mutations are uncovered, add or fix specs until they are covered.
+3. If any mutations survive, change code or specs until they are killed.
+4. Rerun the same single-file mutation command.
+5. Only start the next file when the current file has no uncovered mutations and no survivors.
+
 ## Mutation Rules
 
 | Category | Mutations |
