@@ -99,6 +99,8 @@ To force a full rerun on a file with a manifest:
 clj -M:mutate src/myapp/foo.cljc --mutate-all
 ```
 
+Before a push or major release, consider running `--mutate-all` on the files you changed to verify the full file instead of relying only on differential mutation.
+
 The footer manifest is embedded at the end of the source file and records:
 - the last successful mutation test date
 - each top-level form's id
