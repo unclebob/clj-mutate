@@ -109,7 +109,7 @@
       (let [result (core/validate-args [(.getPath temp)])]
         (should= (.getPath temp) (:source-path result))
         (should= 10 (:timeout-factor result))
-        (should= "clj -M:spec" (:test-command result))
+        (should= "clj -M:spec --tag ~no-mutate" (:test-command result))
         (should= false (:since-last-run result))
         (should= false (:mutate-all result))
         (should= 50 (:mutation-warning result))
@@ -291,6 +291,12 @@
              (core/extract-mutation-date
                ";; mutation-tested: 2026-02-22\n(ns foo)\n(defn bar [] 42)")))
 
+  (it "replaces an existing legacy top stamp"
+    (should= ";; mutation-tested: 2026-03-12T09:30:00-05:00\n(ns foo)\n"
+             (core/stamp-mutation-date
+               ";; mutation-tested: 2026-02-22\n(ns foo)\n"
+               "2026-03-12T09:30:00-05:00")))
+
   (it "strips legacy and embedded metadata before analysis"
     (let [content (str ";; mutation-tested: 2026-02-20\n"
                        "(ns foo)\n(defn bar [] 42)\n\n"
@@ -340,6 +346,8 @@
       (should= #{2} (core/changed-form-indices forms prior)))))
 
 (describe "run-mutation-testing embeds manifest"
+  (tags :no-mutate)
+
   (it "writes the footer manifest after a full run"
     (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
           temp-path (.getPath temp-file)
@@ -347,13 +355,13 @@
       (spit temp-path original)
       (with-redefs [runner/run-specs (fn [& _] :killed)
                     runner/run-specs-timed (fn [cmd]
-                                             (should= "clj -M:spec" cmd)
+                                             (should= "clj -M:spec --tag ~no-mutate" cmd)
                                              {:result :survived :elapsed-ms 100})
                     coverage/load-coverage (fn [_] nil)
                     core/run-mutations-parallel
                     (fn [sites source-path content timeout-ms max-workers test-command]
                       (should= nil max-workers)
-                      (should= "clj -M:spec" test-command)
+                      (should= "clj -M:spec --tag ~no-mutate" test-command)
                       (doall (map (fn [site]
                                     (core/mutate-and-test source-path content nil site timeout-ms test-command))
                                   sites)))]
@@ -378,13 +386,13 @@
       (spit temp-path original)
       (with-redefs [runner/run-specs (fn [& _] :killed)
                     runner/run-specs-timed (fn [cmd]
-                                             (should= "clj -M:spec" cmd)
+                                             (should= "clj -M:spec --tag ~no-mutate" cmd)
                                              {:result :survived :elapsed-ms 100})
                     coverage/load-coverage (fn [_] nil)
                     core/run-mutations-parallel
                     (fn [sites source-path content timeout-ms max-workers test-command]
                       (should= nil max-workers)
-                      (should= "clj -M:spec" test-command)
+                      (should= "clj -M:spec --tag ~no-mutate" test-command)
                       (doall (map (fn [site]
                                     (core/mutate-and-test source-path content nil site timeout-ms test-command))
                                   sites)))]
@@ -518,6 +526,49 @@
         (should= "clj -M:all-tests" @captured-command))
       (.delete temp-file))))
 
+(describe "print-uncovered"
+  (it "prints coverage gaps when uncovered mutations exist"
+    (let [output (with-out-str
+                   (#'core/print-uncovered [{:line 12 :description "if -> if-not"}
+                                            {:line 15 :description "0 -> 1"}]))]
+      (should-contain "=== Coverage Gaps (2 mutations on uncovered lines) ===" output)
+      (should-contain "line 12: if -> if-not" output)
+      (should-contain "line 15: 0 -> 1" output))))
+
+(describe "run-mutation-testing arities"
+  (it "accepts a since-last-run argument without requiring mutate-all and mutation-warning"
+    (let [captured (atom nil)]
+      (with-redefs [core/restore-from-backup! (fn [_] false)
+                    core/extract-embedded-manifest (fn [_] nil)
+                    core/mutation-run-context
+                    (fn [_ _]
+                      {:prev-date nil
+                       :prior-manifest nil
+                       :analysis-content "(ns test-ns)\n"
+                       :all-sites []
+                       :covered-sites []
+                       :uncovered []
+                       :module-unchanged? false
+                       :changed-forms #{}
+                       :manifest-content "(ns test-ns)\n"})
+                    core/select-mutation-sites (fn [& _] [])
+                    core/print-run-header (fn [& _] nil)
+                    core/with-baseline (fn [test-command timeout-factor on-pass]
+                                         (reset! captured {:test-command test-command
+                                                           :timeout-factor timeout-factor})
+                                         (on-pass 100))
+                    core/print-uncovered (fn [_] nil)
+                    core/save-backup! (fn [& _] nil)
+                    core/run-mutation-suite (fn [& _] [])
+                    core/summarize-results (fn [& _] nil)
+                    core/cleanup-backup! (fn [& _] nil)
+                    spit (fn [& _] nil)
+                    slurp (fn [_] "(ns test-ns)\n")]
+        (core/run-mutation-testing "src/test.cljc" nil 7 "clj -M:custom" nil true)
+        (should= {:test-command "clj -M:custom"
+                  :timeout-factor 7}
+                 @captured)))))
+
 (describe "handle-main-result"
   (it "prints help without exiting"
     (let [output (with-out-str (#'core/handle-main-result {:help true :usage "Usage text"}))]
@@ -563,6 +614,8 @@
                  @received)))))
 
 (describe "line numbers stable across stamp"
+  (tags :no-mutate)
+
   (it "reported survivor lines from full run work with --lines"
     (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
           temp-path (.getPath temp-file)
@@ -570,7 +623,7 @@
       (spit temp-path original)
       (with-redefs [runner/run-specs (fn [& _] :survived)
                     runner/run-specs-timed (fn [cmd]
-                                             (should= "clj -M:spec" cmd)
+                                             (should= "clj -M:spec --tag ~no-mutate" cmd)
                                              {:result :survived :elapsed-ms 100})
                     coverage/load-coverage (fn [_] nil)
                     core/run-mutations-parallel

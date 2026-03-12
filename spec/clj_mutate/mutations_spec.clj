@@ -38,6 +38,9 @@
   (it "returns empty vector for form with no matches"
     (should= [] (m/find-mutations '(foo bar baz)))))
 
+  (it "returns empty vector when walking a literal with no mutation sites"
+    (should= [] (m/find-mutations :literal)))
+
 (describe "equivalent mutant suppression"
   (it "suppresses < -> <= when comparing (rand) to a number"
     (let [sites (m/find-mutations '(if (< (rand) 0.5) :a :b))]
@@ -142,7 +145,10 @@
           sites (m/find-mutations form)
           one-site (first (filter #(= (:original %) 1) sites))
           result (m/apply-mutation form (:index one-site))]
-      (should= '(+ 0 2) result))))
+      (should= '(+ 0 2) result)))
+
+  (it "returns the original form when target index is missing"
+    (should= '(foo bar baz) (m/apply-mutation '(foo bar baz) 0))))
 
 (describe "rebuild-coll"
   (it "rebuilds seqs by walking each child"

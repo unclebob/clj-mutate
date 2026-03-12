@@ -49,12 +49,13 @@ clj -M:mutate src/myapp/foo.cljc --mutate-all
 ```
 
 The tool automatically:
-- Runs a baseline test (`clj -M:spec`) to verify all specs pass unmodified
+- Runs a baseline test (`clj -M:spec --tag ~no-mutate`) to verify all included specs pass unmodified
 - Applies each mutation, runs all specs with timeout (10x baseline)
 - Restores original file after each mutation
 - Writes an embedded footer manifest with `:tested-at` and top-level form hashes on successful runs
 - Defaults to differential mutation when that footer manifest already exists
 - Runs coverage if `lcov.info` is missing or stale
+- Excludes specs tagged `:no-mutate` by default to avoid nested mutation runs inside mutation workers
 
 ## Mutation Rules
 
@@ -112,3 +113,4 @@ clj -M:mutate src/myapp/foo.cljc --mutate-all
 - **Specs not running**: Ensure your `:spec` alias runs all specs under `spec/`
 - **Specs fail at baseline**: Fix your specs before mutation testing
 - **Chasing equivalent mutations**: Some survivors are mathematically equivalent; suppress them rather than writing impossible tests
+- **Recursive mutation runs**: Tag specs that invoke `run-mutation-testing` as `:no-mutate`, or override the worker command with `--test-command`

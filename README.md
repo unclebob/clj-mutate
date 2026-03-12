@@ -41,19 +41,20 @@ clj -M:mutate src/myapp/foo.cljc --max-workers 4
 clj -M:mutate src/myapp/foo.cljc --timeout-factor 15
 
 # Use a custom test command (quote commands containing spaces)
-clj -M:mutate src/myapp/foo.cljc --test-command "clj -M:all-tests"
+clj -M:mutate src/myapp/foo.cljc --test-command "clj -M:spec --tag ~slow"
 
 # Show command usage help
 clj -M:mutate --help
 ```
 
 The tool automatically:
-- Runs a baseline test (`clj -M:spec`) to verify all specs pass unmodified
+- Runs a baseline test (`clj -M:spec --tag ~no-mutate`) to verify all included specs pass unmodified
 - Applies each mutation, runs all specs with a timeout (`--timeout-factor`, default 10x baseline)
 - Restores the original file after each mutation
 - Writes an embedded footer manifest with the last test date and top-level form hashes
 - Defaults to differential mutation when that footer manifest is already present
 - Prints a warning when mutation count exceeds `--mutation-warning` (default `50`)
+- Excludes specs tagged `:no-mutate` by default so mutation workers do not recursively launch nested mutation runs
 
 ## Recommended Workflow
 
@@ -64,6 +65,8 @@ Before running specs, run [speclj-structure-check](https://github.com/unclebob/s
 ```bash
 clj -M:spec
 ```
+
+If you have specs that should never run from inside mutation workers, tag them `:no-mutate`. `clj-mutate` excludes those by default with `clj -M:spec --tag ~no-mutate`. You can override that behavior with `--test-command`.
 
 Then mutate exactly one source file with `--max-workers 3`:
 

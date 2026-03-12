@@ -1,4 +1,3 @@
-;; mutation-tested: 2026-02-27
 (ns clj-mutate.mutations)
 
 (defn- rand-comparison?
@@ -171,3 +170,7 @@
                       (rebuild-coll walk grandparent parent node)))
                   (rebuild-coll walk grandparent parent node))))]
       (walk nil nil form))))
+
+;; clj-mutate-manifest-begin
+;; {:version 1, :tested-at "2026-03-12T08:25:57.35497-05:00", :module-hash "-741566103", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line 1, :hash "-739386167"} {:id "defn-/rand-comparison?", :kind "defn-", :line 3, :end-line 11, :hash "2022929343"} {:id "defn-/rand-nth-guard-form?", :kind "defn-", :line 13, :end-line 26, :hash "2103202333"} {:id "defn-/rand-nth-single-element-guard?", :kind "defn-", :line 28, :end-line 33, :hash "1173485497"} {:id "defn-/inside-rand-nth-literal?", :kind "defn-", :line 35, :end-line 42, :hash "-585074927"} {:id "defn-/subvec-trim-boundary?", :kind "defn-", :line 44, :end-line 54, :hash "-1009745996"} {:id "def/rules", :kind "def", :line 56, :end-line 75, :hash "-771035529"} {:id "defn/matches-rule?", :kind "defn", :line 77, :end-line 89, :hash "-1174671214"} {:id "defn-/first-matching-rule", :kind "defn-", :line 91, :end-line 92, :hash "-1816684071"} {:id "defn-/node-line", :kind "defn-", :line 94, :end-line 99, :hash "-291343130"} {:id "defn-/node-column", :kind "defn-", :line 101, :end-line 106, :hash "-941899799"} {:id "defn-/walk-children", :kind "defn-", :line 108, :end-line 115, :hash "-162145999"} {:id "defn/find-mutations", :kind "defn", :line 117, :end-line 139, :hash "-1879045609"} {:id "defn-/rebuild-coll", :kind "defn-", :line 141, :end-line 149, :hash "1219574882"} {:id "defn/apply-mutation", :kind "defn", :line 151, :end-line 172, :hash "-1517599476"}]}
+;; clj-mutate-manifest-end

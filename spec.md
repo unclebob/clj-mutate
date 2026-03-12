@@ -74,10 +74,18 @@
 ## Execution Behavior
 
 - The tool runs a baseline test command first.
+- The default test command is `clj -M:spec --tag ~no-mutate`.
+- Users may override the test runner command with `--test-command CMD`.
 - Mutation timeout is `baseline-elapsed-ms * timeout-factor`.
 - Mutations are executed in parallel worker directories.
 - Each worker mutates a private copy of the source file.
 - The original source is restored after each mutant and after interrupted runs.
+
+## Spec Tagging
+
+- Specs tagged `:no-mutate` are excluded from the default mutation worker test command.
+- This is intended for specs that directly invoke mutation runs or would otherwise recursively expand mutation work.
+- Projects may choose a different test selection strategy by passing `--test-command`.
 
 ## Reporting
 

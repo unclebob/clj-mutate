@@ -112,4 +112,38 @@
         (should-be-nil (#'cov/stale-reason temp "src/empire/combat.cljc")))
       (.delete temp))))
 
+(describe "newest-file-mtime"
+  (it "returns 0 for a missing directory"
+    (let [missing (java.io.File. (str "/tmp/no-such-dir-" (System/nanoTime)))]
+      (should= 0 (#'cov/newest-file-mtime missing))))
+
+  (it "returns the newest mtime among regular files in a directory tree"
+    (let [root (doto (java.io.File. (str "/tmp/mtime-dir-" (System/nanoTime))) (.mkdirs))
+          nested (doto (java.io.File. root "nested") (.mkdirs))
+          a (doto (java.io.File. root "a.txt") (spit "a"))
+          b (doto (java.io.File. nested "b.txt") (spit "b"))]
+      (.setLastModified a 100)
+      (.setLastModified b 200)
+      (should= 200 (#'cov/newest-file-mtime root))
+      (.delete b)
+      (.delete nested)
+      (.delete a)
+      (.delete root))))
+
+(describe "newest-input-mtime"
+  (it "uses 0 for a missing source file"
+    (with-redefs [cov/newest-file-mtime (fn [_] 50)]
+      (should= 50 (#'cov/newest-input-mtime (str "/tmp/missing-src-" (System/nanoTime) ".cljc")))))
+
+  (it "returns the max mtime across source, src, and spec"
+    (let [temp (java.io.File/createTempFile "coverage-src" ".cljc")]
+      (.setLastModified temp 120)
+      (with-redefs [cov/newest-file-mtime (fn [dir]
+                                            (case (.getPath dir)
+                                              "src" 130
+                                              "spec" 140
+                                              0))]
+        (should= 140 (#'cov/newest-input-mtime (.getPath temp))))
+      (.delete temp))))
+
 (run-specs)

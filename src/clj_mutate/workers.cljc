@@ -49,3 +49,7 @@
   "Remove the base directory and all worker directories."
   [base-dir]
   (delete-recursive! (File. base-dir)))
+
+;; clj-mutate-manifest-begin
+;; {:version 1, :tested-at "2026-03-12T08:18:56.919254-05:00", :module-hash "262639133", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line 4, :hash "1667957825"} {:id "defn/new-run-base-dir", :kind "defn", :line 6, :end-line 9, :hash "122525552"} {:id "defn-/symlink!", :kind "defn-", :line 11, :end-line 15, :hash "-1052323910"} {:id "defn-/delete-recursive!", :kind "defn-", :line 17, :end-line 24, :hash "593481821"} {:id "defn/create-worker-dirs!", :kind "defn", :line 26, :end-line 46, :hash "-1293715584"} {:id "defn/cleanup-worker-dirs!", :kind "defn", :line 48, :end-line 51, :hash "178299261"}]}
+;; clj-mutate-manifest-end
