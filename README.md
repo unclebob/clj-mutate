@@ -58,6 +58,7 @@ The tool automatically:
 - Applies each mutation, runs all specs with a timeout (`--timeout-factor`, default 10x baseline)
 - Restores the original file after each mutation
 - Writes an embedded footer manifest with the last test date and top-level form hashes
+- Updates that embedded manifest after successful differential runs as well as full runs
 - Defaults to differential mutation when that footer manifest is already present
 - Prints a warning when mutation count exceeds `--mutation-warning` (default `50`)
 - Excludes specs tagged `:no-mutate` by default so mutation workers do not recursively launch nested mutation runs
@@ -127,6 +128,8 @@ The footer manifest is embedded at the end of the source file and records:
 - each top-level form's id
 - its line span
 - a hash of its normalized form
+
+Differential mutation runs update the footer manifest on success, so the next differential run compares against the latest successful mutation baseline.
 
 ## Mutation Rules
 

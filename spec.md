@@ -50,6 +50,7 @@
 ## Embedded Manifest
 
 - Successful runs write a footer manifest at the end of the source file.
+- Successful differential runs update that same footer manifest; they do not leave the prior baseline in place.
 - The manifest contains:
   - `:version`
   - `:tested-at` as ISO offset date-time
