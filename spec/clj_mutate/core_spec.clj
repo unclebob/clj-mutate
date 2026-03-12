@@ -130,6 +130,13 @@
         (should= true (:mutate-all result))
         (.delete temp))))
 
+  (it "parses --scan"
+    (let [temp (java.io.File/createTempFile "src" ".cljc")]
+      (spit temp "(ns test-ns)")
+      (let [result (core/validate-args [(.getPath temp) "--scan"])]
+        (should= true (:scan result))
+        (.delete temp))))
+
   (it "parses --mutation-warning"
     (let [temp (java.io.File/createTempFile "src" ".cljc")]
       (spit temp "(ns test-ns)")
@@ -168,6 +175,23 @@
                       (core/validate-args [(.getPath temp) "--mutate-all" "--lines" "3"]))
       (should-contain :error
                       (core/validate-args [(.getPath temp) "--since-last-run" "--mutate-all"]))
+      (.delete temp)))
+
+  (it "rejects combining --scan with mutation execution options"
+    (let [temp (java.io.File/createTempFile "src" ".cljc")]
+      (spit temp "(ns test-ns)")
+      (should-contain :error
+                      (core/validate-args [(.getPath temp) "--scan" "--lines" "3"]))
+      (should-contain :error
+                      (core/validate-args [(.getPath temp) "--scan" "--since-last-run"]))
+      (should-contain :error
+                      (core/validate-args [(.getPath temp) "--scan" "--mutate-all"]))
+      (should-contain :error
+                      (core/validate-args [(.getPath temp) "--scan" "--timeout-factor" "7"]))
+      (should-contain :error
+                      (core/validate-args [(.getPath temp) "--scan" "--test-command" "clj -M:all-tests"]))
+      (should-contain :error
+                      (core/validate-args [(.getPath temp) "--scan" "--max-workers" "2"]))
       (.delete temp)))
 
   (it "parses --timeout-factor as a positive integer"
@@ -569,6 +593,32 @@
                   :timeout-factor 7}
                  @captured)))))
 
+(describe "scan-mutation-sites"
+  (it "reports total and changed mutation sites with a warning"
+    (let [source "(ns test-ns)\n(defn foo [] (+ 1 2))\n"
+          prior (core/build-embedded-manifest (core/read-source-forms source)
+                                              "2026-02-20T08:00:00-06:00")
+          updated "(ns test-ns)\n(defn foo [] (+ 1 20))\n"
+          content (core/embed-mutation-manifest updated prior)
+          output (with-out-str
+                   (with-redefs [slurp (fn [_] content)]
+                     (#'core/scan-mutation-sites "src/test.cljc" 1)))]
+      (should-contain "=== Mutation Scan: src/test.cljc ===" output)
+      (should-contain "Found 2 mutation sites." output)
+      (should-contain "Changed mutation sites: 2" output)
+      (should-contain "WARNING: Found 2 mutations. Consider splitting this module." output)))
+
+  (it "reports zero changed mutation sites when the module hash is unchanged"
+    (let [source "(ns test-ns)\n(defn foo [] (+ 1 2))\n"
+          prior (core/build-embedded-manifest (core/read-source-forms source)
+                                              "2026-02-20T08:00:00-06:00")
+          content (core/embed-mutation-manifest source prior)
+          output (with-out-str
+                   (with-redefs [slurp (fn [_] content)]
+                     (#'core/scan-mutation-sites "src/test.cljc" 50)))]
+      (should-contain "Found 2 mutation sites." output)
+      (should-contain "Changed mutation sites: 0" output))))
+
 (describe "handle-main-result"
   (it "prints help without exiting"
     (let [output (with-out-str (#'core/handle-main-result {:help true :usage "Usage text"}))]
@@ -582,6 +632,18 @@
       (should= 1 @status)
       (should-contain "Bad args" output)
       (should-contain "Usage text" output)))
+
+  (it "dispatches to scan-mutation-sites for scan input"
+    (let [received (atom nil)]
+      (with-redefs [core/scan-mutation-sites (fn [source-path mutation-warning]
+                                               (reset! received {:source-path source-path
+                                                                 :mutation-warning mutation-warning}))]
+        (#'core/handle-main-result {:source-path "src/foo.cljc"
+                                    :scan true
+                                    :mutation-warning 75})
+        (should= {:source-path "src/foo.cljc"
+                  :mutation-warning 75}
+                 @received))))
 
   (it "dispatches to run-mutation-testing for valid input"
     (let [received (atom nil)]

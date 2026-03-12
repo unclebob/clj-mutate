@@ -38,6 +38,9 @@ Optional coverage integration (skips mutations on uncovered lines):
 # If the file has a footer manifest, this defaults to changed top-level forms only.
 clj -M:mutate src/myapp/foo.cljc
 
+# Scan mutation counts without running coverage or specs
+clj -M:mutate src/myapp/foo.cljc --scan
+
 # Retest only specific lines (e.g. survivors from previous run)
 clj -M:mutate src/myapp/foo.cljc --lines 45,67,89
 
@@ -56,6 +59,8 @@ The tool automatically:
 - Defaults to differential mutation when that footer manifest already exists
 - Runs coverage if `lcov.info` is missing or stale
 - Excludes specs tagged `:no-mutate` by default to avoid nested mutation runs inside mutation workers
+
+Use `--scan` when you want a fast module-size signal without paying for coverage or test execution. It reports total mutation sites, changed mutation sites, and the usual warning threshold output.
 
 ## Mutation Rules
 
