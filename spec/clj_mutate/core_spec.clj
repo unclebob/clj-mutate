@@ -730,6 +730,26 @@
                   :mutation-warning 75}
                  @received)))))
 
+(describe "-main"
+  (it "shuts down agents after successful command handling"
+    (let [handled (atom nil)
+          shutdowns (atom 0)]
+      (with-redefs [core/validate-args (fn [args] {:validated args})
+                    core/handle-main-result (fn [validated] (reset! handled validated))
+                    core/shutdown-runtime! (fn [] (swap! shutdowns inc))]
+        (core/-main "src/foo.cljc" "--scan")
+        (should= {:validated ["src/foo.cljc" "--scan"]} @handled)
+        (should= 1 @shutdowns))))
+
+  (it "shuts down agents when command handling throws"
+    (let [shutdowns (atom 0)]
+      (should-throw Exception
+                    (with-redefs [core/validate-args (fn [_] {:source-path "src/foo.cljc"})
+                                  core/handle-main-result (fn [_] (throw (Exception. "boom")))
+                                  core/shutdown-runtime! (fn [] (swap! shutdowns inc))]
+                      (core/-main "src/foo.cljc")))
+      (should= 1 @shutdowns))))
+
 (describe "line numbers stable across stamp"
   (tags :no-mutate)
 
