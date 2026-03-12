@@ -22,6 +22,9 @@ Requires [Speclj](https://github.com/slagyr/speclj) as your test runner.
 # If the file already has a footer manifest, this defaults to changed top-level forms only.
 clj -M:mutate src/myapp/foo.cljc
 
+# Scan a file for mutation counts without running coverage or specs
+clj -M:mutate src/myapp/foo.cljc --scan
+
 # Retest only specific lines (e.g. survivors from a previous run)
 clj -M:mutate src/myapp/foo.cljc --lines 45,67,89
 
@@ -56,6 +59,11 @@ The tool automatically:
 - Prints a warning when mutation count exceeds `--mutation-warning` (default `50`)
 - Excludes specs tagged `:no-mutate` by default so mutation workers do not recursively launch nested mutation runs
 
+`--scan` is the fast structural mode. It skips coverage, skips test execution, and reports:
+- total mutation sites
+- changed mutation sites relative to the embedded manifest
+- the standard mutation-count warning
+
 ## Recommended Workflow
 
 Run mutation testing one file at a time.
@@ -67,6 +75,14 @@ clj -M:spec
 ```
 
 If you have specs that should never run from inside mutation workers, tag them `:no-mutate`. `clj-mutate` excludes those by default with `clj -M:spec --tag ~no-mutate`. You can override that behavior with `--test-command`.
+
+After specs pass, run `--scan` on the files you changed:
+
+```bash
+clj -M:mutate src/myapp/foo.cljc --scan
+```
+
+If a changed file reports more than `50` mutation sites, consider splitting it before doing full mutation work.
 
 Then mutate exactly one source file with `--max-workers 3`:
 
