@@ -3,30 +3,37 @@
             [clojure.java.shell :as shell])
   (:import [java.io File]))
 
+(defn- parse-data-line [line]
+  (let [[line-num count] (str/split (subs line 3) #",")]
+    {:line-num (parse-long line-num)
+     :count (parse-long count)}))
+
+(defn- apply-lcov-line [{:keys [current-file result] :as state} line]
+  (cond
+    (str/starts-with? line "SF:")
+    {:current-file (subs line 3)
+     :result (assoc result (subs line 3) #{})}
+
+    (str/starts-with? line "DA:")
+    (let [{:keys [line-num count]} (parse-data-line line)]
+      (if (and current-file (pos? count))
+        {:current-file current-file
+         :result (update result current-file conj line-num)}
+        state))
+
+    (= "end_of_record" line)
+    (assoc state :current-file nil)
+
+    :else
+    state))
+
 (defn parse-lcov
   "Parse LCOV text into {\"file-path\" #{covered-line-numbers}}."
   [lcov-content]
-  (let [lines (str/split-lines lcov-content)]
-    (loop [lines lines current-file nil result {}]
-      (if (empty? lines)
-        result
-        (let [line (first lines)]
-          (cond
-            (str/starts-with? line "SF:")
-            (let [file (subs line 3)]
-              (recur (rest lines) file (assoc result file #{})))
-
-            (str/starts-with? line "DA:")
-            (let [parts (str/split (subs line 3) #",")
-                  line-num (parse-long (first parts))
-                  count (parse-long (second parts))]
-              (if (and current-file (pos? count))
-                (recur (rest lines) current-file
-                       (update result current-file conj line-num))
-                (recur (rest lines) current-file result)))
-
-            :else
-            (recur (rest lines) current-file result)))))))
+  (:result
+    (reduce apply-lcov-line
+            {:current-file nil :result {}}
+            (str/split-lines lcov-content))))
 
 (defn covered-lines
   "Return set of covered lines for source-path from lcov-map.

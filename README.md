@@ -18,11 +18,21 @@ Requires [Speclj](https://github.com/slagyr/speclj) as your test runner.
 ## Usage
 
 ```bash
-# Mutate-test a source file (runs all mutations on covered lines)
+# Mutate-test a source file.
+# If the file already has a footer manifest, this defaults to changed top-level forms only.
 clj -M:mutate src/myapp/foo.cljc
 
 # Retest only specific lines (e.g. survivors from a previous run)
 clj -M:mutate src/myapp/foo.cljc --lines 45,67,89
+
+# Force differential mutation even if you want to be explicit
+clj -M:mutate src/myapp/foo.cljc --since-last-run
+
+# Override the default differential behavior and mutate all covered sites
+clj -M:mutate src/myapp/foo.cljc --mutate-all
+
+# Warn when a module exceeds a mutation-count threshold
+clj -M:mutate src/myapp/foo.cljc --mutation-warning 75
 
 # Limit parallel worker count
 clj -M:mutate src/myapp/foo.cljc --max-workers 4
@@ -41,7 +51,9 @@ The tool automatically:
 - Runs a baseline test (`clj -M:spec`) to verify all specs pass unmodified
 - Applies each mutation, runs all specs with a timeout (`--timeout-factor`, default 10x baseline)
 - Restores the original file after each mutation
-- Stamps the source with `;; mutation-tested: YYYY-MM-DD` on full runs
+- Writes an embedded footer manifest with the last test date and top-level form hashes
+- Defaults to differential mutation when that footer manifest is already present
+- Prints a warning when mutation count exceeds `--mutation-warning` (default `50`)
 
 ## Recommended Workflow
 
@@ -71,6 +83,24 @@ Recommended loop for each file:
 3. If any mutations survive, change code or specs until they are killed.
 4. Rerun the same single-file mutation command.
 5. Only start the next file when the current file has no uncovered mutations and no survivors.
+
+For local incremental work, once a file has a footer manifest the default run is differential. You can still be explicit:
+
+```bash
+clj -M:mutate src/myapp/foo.cljc --since-last-run
+```
+
+To force a full rerun on a file with a manifest:
+
+```bash
+clj -M:mutate src/myapp/foo.cljc --mutate-all
+```
+
+The footer manifest is embedded at the end of the source file and records:
+- the last successful mutation test date
+- each top-level form's id
+- its line span
+- a hash of its normalized form
 
 ## Mutation Rules
 

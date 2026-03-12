@@ -34,18 +34,26 @@ Optional coverage integration (skips mutations on uncovered lines):
 ## Usage
 
 ```bash
-# Mutation-test a source file (all covered lines)
+# Mutation-test a source file.
+# If the file has a footer manifest, this defaults to changed top-level forms only.
 clj -M:mutate src/myapp/foo.cljc
 
 # Retest only specific lines (e.g. survivors from previous run)
 clj -M:mutate src/myapp/foo.cljc --lines 45,67,89
+
+# Retest only top-level forms changed since the last successful mutation run
+clj -M:mutate src/myapp/foo.cljc --since-last-run
+
+# Override differential mode and run all covered mutations
+clj -M:mutate src/myapp/foo.cljc --mutate-all
 ```
 
 The tool automatically:
 - Runs a baseline test (`clj -M:spec`) to verify all specs pass unmodified
 - Applies each mutation, runs all specs with timeout (10x baseline)
 - Restores original file after each mutation
-- Stamps source with `;; mutation-tested: YYYY-MM-DD` on full runs
+- Writes an embedded footer manifest with `:tested-at` and top-level form hashes on successful runs
+- Defaults to differential mutation when that footer manifest already exists
 - Runs coverage if `lcov.info` is missing or stale
 
 ## Mutation Rules
@@ -84,6 +92,20 @@ Known-equivalent mutations are auto-suppressed to reduce false survivors:
 4. Write specs to kill survivors
 5. Retest survivors: `clj -M:mutate src/myapp/foo.cljc --lines 45,67`
 6. Repeat until kill rate is satisfactory
+
+For incremental work on an already-mutated file, the default run is already differential. You can still be explicit:
+
+```bash
+clj -M:mutate src/myapp/foo.cljc --since-last-run
+```
+
+This compares current top-level forms with the footer manifest from the last successful mutation run and tests only forms whose hashes changed.
+
+To force a full rerun on a file with a manifest:
+
+```bash
+clj -M:mutate src/myapp/foo.cljc --mutate-all
+```
 
 ## Common Mistakes
 

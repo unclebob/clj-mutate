@@ -1,5 +1,6 @@
 (ns clj-mutate.core
-  (:require [clojure.string :as str]
+  (:require [clojure.edn :as edn]
+            [clojure.string :as str]
             [clojure.tools.reader :as reader]
             [clojure.tools.reader.reader-types :as reader-types]
             [clj-mutate.coverage :as coverage]
@@ -9,6 +10,15 @@
   (:import [java.io File]))
 
 (def ^:private mutation-comment-re #"^;; mutation-tested: (\d{4}-\d{2}-\d{2})")
+(def ^:private manifest-start-line ";; clj-mutate-manifest-begin")
+(def ^:private manifest-end-line ";; clj-mutate-manifest-end")
+(def ^:private manifest-block-re
+  (re-pattern
+    (str "(?ms)\n?"
+         (java.util.regex.Pattern/quote manifest-start-line)
+         "\n(.*?)\n"
+         (java.util.regex.Pattern/quote manifest-end-line)
+         "\n?$")))
 (def ^:private worker-root-dir "target/mutation-workers")
 
 (def ^:private usage-summary
@@ -17,17 +27,24 @@
     "\n"
     "Options:\n"
     "  --lines L1,L2,...      Run only mutations on these source lines\n"
+    "  --since-last-run       Run only mutations in changed top-level forms since last successful run\n"
+    "  --mutate-all           Run all covered mutations even if a manifest exists\n"
+    "  --mutation-warning N   Warn when more than N mutations are found (default 50)\n"
     "  --timeout-factor N     Mutation timeout multiplier vs baseline (default 10)\n"
     "  --test-command CMD     Test command to run (default \"clj -M:spec\")\n"
     "  --max-workers N        Limit parallel workers to N (positive integer)\n"
     "  --help                 Print this help and exit\n"))
 
+(declare extract-embedded-manifest)
+
 (defn extract-mutation-date
   "Extract the mutation test date from a source file's content.
    Returns the date string or nil."
   [content]
-  (when-let [m (re-find mutation-comment-re content)]
-    (second m)))
+  (or (when-let [manifest (:tested-at (extract-embedded-manifest content))]
+        manifest)
+      (when-let [m (re-find mutation-comment-re content)]
+        (second m))))
 
 (defn stamp-mutation-date
   "Add or replace the mutation-tested comment at the top of source content."
@@ -36,6 +53,104 @@
     (if (re-find mutation-comment-re content)
       (str/replace content mutation-comment-re comment-line)
       (str comment-line "\n" content))))
+
+(declare build-embedded-manifest)
+
+(defn extract-embedded-manifest
+  "Read the embedded mutation manifest from the end of the file, if present."
+  [content]
+  (when-let [[_ raw-body] (re-find manifest-block-re content)]
+    (->> (str/split-lines raw-body)
+         (map #(str/replace % #"^;; ?" ""))
+         (str/join "\n")
+         edn/read-string)))
+
+(defn strip-embedded-manifest
+  "Remove the embedded mutation manifest block from the end of the file."
+  [content]
+  (str/replace content manifest-block-re ""))
+
+(defn strip-mutation-metadata
+  "Remove legacy top-of-file date stamps and footer manifests."
+  [content]
+  (-> content
+      strip-embedded-manifest
+      (str/replace #"(?m)^;; mutation-tested: \d{4}-\d{2}-\d{2}\n?" "")))
+
+(defn- form-kind [form]
+  (when (seq? form)
+    (first form)))
+
+(defn- top-level-form-id [idx form]
+  (let [head (form-kind form)]
+    (cond
+      (and (#{'def 'defn 'defn- 'defmacro 'defmulti} head)
+           (symbol? (second form)))
+      (str head "/" (second form))
+
+      (and (= 'defmethod head)
+           (symbol? (second form)))
+      (str head "/" (second form) "/" (pr-str (nth form 2 nil)))
+
+      :else
+      (str "form/" idx "/" (or head :literal)))))
+
+(defn top-level-form-manifest
+  "Summarize top-level forms for incremental mutation selection."
+  [forms]
+  (mapv
+    (fn [idx form]
+      {:id (top-level-form-id idx form)
+       :kind (str (or (form-kind form) :literal))
+       :line (-> form meta :line)
+       :end-line (-> form meta :end-line)
+       :hash (str (hash (pr-str form)))})
+    (range)
+    forms))
+
+(defn module-hash
+  "Semantic hash of the module based on parsed top-level forms."
+  [forms]
+  (str (hash (pr-str forms))))
+
+(defn changed-form-indices
+  "Return current form indices whose top-level form hash differs from the manifest."
+  [forms manifest]
+  (let [current (top-level-form-manifest forms)
+        previous-by-id (into {} (map (juxt :id identity) (:forms manifest)))]
+    (->> current
+         (keep-indexed
+           (fn [idx form-entry]
+             (let [previous (get previous-by-id (:id form-entry))]
+               (when (or (nil? previous)
+                         (not= (:hash previous) (:hash form-entry)))
+                 idx))))
+         set)))
+
+(defn build-embedded-manifest
+  "Create the embedded footer manifest for the current file contents."
+  [forms date-str]
+  {:version 1
+   :tested-at date-str
+   :module-hash (module-hash forms)
+   :forms (top-level-form-manifest forms)})
+
+(defn embed-mutation-manifest
+  "Replace the footer manifest with an updated one."
+  [content manifest]
+  (let [base (strip-mutation-metadata content)
+        body (->> (pr-str manifest)
+                  str/split-lines
+                  (map #(str ";; " %))
+                  (str/join "\n"))]
+    (str (str/trimr base)
+         "\n\n"
+         manifest-start-line
+         "\n"
+         body
+         "\n"
+         manifest-end-line
+         "\n")))
 
 (defn- backup-path [source-path]
   (str source-path ".mutation-backup"))
@@ -99,19 +214,17 @@
    ;;   \"+\" as arithmetic must NOT match inside \"+foo\" (namespace-qualified)"
   [token]
   (let [s (str token)]
-    (cond
-      (= s "=")     (re-pattern "(?<![><=!])=(?!=)")
-      (= s "not=")  (re-pattern "not=")
-      (= s ">")     (re-pattern ">(?!=)")
-      (= s ">=")    (re-pattern ">=")
-      (= s "<")     (re-pattern "<(?!=)")
-      (= s "<=")    (re-pattern "<=")
-      (re-matches #"\d+" s)
-      (re-pattern (str "(?<!\\d|\\.)" (java.util.regex.Pattern/quote s) "(?!\\d|\\.)"))
-      (re-matches #"[a-zA-Z].*" s)
-      (re-pattern (str "(?<![a-zA-Z0-9_-])" (java.util.regex.Pattern/quote s) "(?![a-zA-Z0-9_-])"))
-      :else
-      (re-pattern (str "(?<=[\\s(])" (java.util.regex.Pattern/quote s) "(?=[\\s)])")))))
+    (or ({"="    (re-pattern "(?<![><=!])=(?!=)")
+          "not=" (re-pattern "not=")
+          ">"    (re-pattern ">(?!=)")
+          ">="   (re-pattern ">=")
+          "<"    (re-pattern "<(?!=)")
+          "<="   (re-pattern "<=")} s)
+        (when (re-matches #"\d+" s)
+          (re-pattern (str "(?<!\\d|\\.)" (java.util.regex.Pattern/quote s) "(?!\\d|\\.)")))
+        (when (re-matches #"[a-zA-Z].*" s)
+          (re-pattern (str "(?<![a-zA-Z0-9_-])" (java.util.regex.Pattern/quote s) "(?![a-zA-Z0-9_-])")))
+        (re-pattern (str "(?<=[\\s(])" (java.util.regex.Pattern/quote s) "(?=[\\s)])")))))
 
 (defn mutate-source-text
   "Replace a single token in the original source text, preserving formatting.
@@ -197,6 +310,96 @@
   (set (map #(parse-long (str/trim %))
             (str/split value #","))))
 
+(def ^:private default-options
+  {:source-path nil
+   :lines nil
+   :since-last-run false
+   :mutate-all false
+   :mutation-warning 50
+   :timeout-factor 10
+   :test-command "clj -M:spec"
+   :max-workers nil})
+
+(defn- usage-error [message]
+  {:error message :usage usage-summary})
+
+(defn- ensure-source-path [options]
+  (let [source-path (:source-path options)]
+    (cond
+      (nil? source-path) (usage-error "Missing source file argument.")
+      (not (.exists (File. ^String source-path)))
+      (usage-error (str "Source file not found: " source-path))
+      :else options)))
+
+(defn- parse-positive-int-option [value option-name]
+  (let [n (parse-long value)]
+    (if (and n (pos? n))
+      n
+      (usage-error (str "Invalid value for " option-name ". Expected a positive integer.")))))
+
+(defn- assoc-valid-option [options key parsed]
+  (if (:error parsed)
+    parsed
+    (assoc options key parsed)))
+
+(defn- parse-lines-option [options value]
+  (if (or (:since-last-run options) (:mutate-all options))
+    (usage-error "Cannot combine --lines with --since-last-run or --mutate-all.")
+    (let [parsed-lines (parse-lines value)]
+      (if (every? some? parsed-lines)
+        (assoc options :lines parsed-lines)
+        (usage-error "Invalid value for --lines. Expected comma-separated integers.")))))
+
+(defn- parse-timeout-factor-option [options value]
+  (assoc-valid-option options :timeout-factor (parse-positive-int-option value "--timeout-factor")))
+
+(defn- parse-test-command-option [options value]
+  (if (str/blank? value)
+    (usage-error "Missing value for --test-command.")
+    (assoc options :test-command value)))
+
+(defn- parse-max-workers-option [options value]
+  (assoc-valid-option options :max-workers (parse-positive-int-option value "--max-workers")))
+
+(defn- parse-mutation-warning-option [options value]
+  (assoc-valid-option options :mutation-warning (parse-positive-int-option value "--mutation-warning")))
+
+(def ^:private option-updaters
+  {"--lines" parse-lines-option
+   "--mutation-warning" parse-mutation-warning-option
+   "--timeout-factor" parse-timeout-factor-option
+   "--test-command" parse-test-command-option
+   "--max-workers" parse-max-workers-option})
+
+(defn- update-arg-option [options option-key value]
+  ((get option-updaters option-key) options value))
+
+(defn- consume-option [options arg rest-args]
+  (cond
+    (= "--since-last-run" arg)
+    (if (or (:lines options) (:mutate-all options))
+      [rest-args (usage-error "Cannot combine --since-last-run with --lines or --mutate-all.")]
+      [rest-args (assoc options :since-last-run true)])
+
+    (= "--mutate-all" arg)
+    (if (or (:lines options) (:since-last-run options))
+      [rest-args (usage-error "Cannot combine --mutate-all with --lines or --since-last-run.")]
+      [rest-args (assoc options :mutate-all true)])
+
+    (contains? option-updaters arg)
+    (if-let [value (first rest-args)]
+      [(rest rest-args) (update-arg-option options arg value)]
+      [rest-args (usage-error (str "Missing value for " arg "."))])
+
+    (str/starts-with? arg "--")
+    [rest-args (usage-error (str "Unknown option: " arg))]
+
+    (:source-path options)
+    [rest-args (usage-error (str "Unexpected extra argument: " arg))]
+
+    :else
+    [rest-args (assoc options :source-path arg)]))
+
 (defn validate-args
   "Validate command-line arguments.
    Returns {:help true :usage ...} for --help,
@@ -206,69 +409,13 @@
   (if (some #{"--help"} args)
     {:help true :usage usage-summary}
     (loop [[arg & rest-args] args
-           source-path nil
-           lines nil
-           timeout-factor 10
-           test-command "clj -M:spec"
-           max-workers nil]
-      (cond
-        (nil? arg)
-        (cond
-          (nil? source-path)
-          {:error "Missing source file argument." :usage usage-summary}
-
-          (not (.exists (File. ^String source-path)))
-          {:error (str "Source file not found: " source-path) :usage usage-summary}
-
-          :else
-          {:source-path source-path
-           :lines lines
-           :timeout-factor timeout-factor
-           :test-command test-command
-           :max-workers max-workers})
-
-        (= "--lines" arg)
-        (if-let [value (first rest-args)]
-          (let [parsed-lines (parse-lines value)]
-            (if (every? some? parsed-lines)
-              (recur (rest rest-args) source-path parsed-lines timeout-factor test-command max-workers)
-              {:error "Invalid value for --lines. Expected comma-separated integers."
-               :usage usage-summary}))
-          {:error "Missing value for --lines." :usage usage-summary})
-
-        (= "--timeout-factor" arg)
-        (if-let [value (first rest-args)]
-          (let [n (parse-long value)]
-            (if (and n (pos? n))
-              (recur (rest rest-args) source-path lines n test-command max-workers)
-              {:error "Invalid value for --timeout-factor. Expected a positive integer."
-               :usage usage-summary}))
-          {:error "Missing value for --timeout-factor." :usage usage-summary})
-
-        (= "--test-command" arg)
-        (if-let [value (first rest-args)]
-          (if (str/blank? value)
-            {:error "Missing value for --test-command." :usage usage-summary}
-            (recur (rest rest-args) source-path lines timeout-factor value max-workers))
-          {:error "Missing value for --test-command." :usage usage-summary})
-
-        (= "--max-workers" arg)
-        (if-let [value (first rest-args)]
-          (let [n (parse-long value)]
-            (if (and n (pos? n))
-              (recur (rest rest-args) source-path lines timeout-factor test-command n)
-              {:error "Invalid value for --max-workers. Expected a positive integer."
-               :usage usage-summary}))
-          {:error "Missing value for --max-workers." :usage usage-summary})
-
-        (str/starts-with? arg "--")
-        {:error (str "Unknown option: " arg) :usage usage-summary}
-
-        source-path
-        {:error (str "Unexpected extra argument: " arg) :usage usage-summary}
-
-        :else
-        (recur rest-args arg lines timeout-factor test-command max-workers)))))
+           options default-options]
+      (if (nil? arg)
+        (ensure-source-path options)
+        (let [[remaining updated-options] (consume-option options arg rest-args)]
+          (if (:error updated-options)
+            updated-options
+            (recur remaining updated-options)))))))
 
 (defn- print-progress [i total result site]
   (println (format "[%3d/%d] %-8s  L%-4d %s"
@@ -333,9 +480,9 @@
                        (or (:line (:site r)) 0)
                        (:description (:site r)))))))
 
-(defn- today-str []
-  (.format (java.time.LocalDate/now)
-           (java.time.format.DateTimeFormatter/ISO_LOCAL_DATE)))
+(defn- now-str []
+  (.format (java.time.OffsetDateTime/now)
+           java.time.format.DateTimeFormatter/ISO_OFFSET_DATE_TIME))
 
 (defn- filter-by-lines
   "Filter mutation sites to only those on the specified lines."
@@ -344,76 +491,162 @@
     (vec (filter #(contains? lines (:line %)) sites))
     sites))
 
+(defn- filter-by-form-indices
+  "Filter mutation sites to only those within the selected top-level forms."
+  [sites form-indices]
+  (if form-indices
+    (vec (filter #(contains? form-indices (:form-index %)) sites))
+    sites))
+
+(defn- mutation-run-context [source-path since-last-run]
+  (let [original-content (slurp source-path)
+        prior-manifest (extract-embedded-manifest original-content)
+        analysis-content (strip-mutation-metadata original-content)
+        forms (read-source-forms analysis-content)
+        current-module-hash (module-hash forms)
+        module-unchanged? (and since-last-run
+                               prior-manifest
+                               (= current-module-hash (:module-hash prior-manifest)))
+        changed-forms (when (and since-last-run prior-manifest (not module-unchanged?))
+                        (changed-form-indices forms prior-manifest))
+        all-sites (discover-all-mutations forms)
+        covered-lines (coverage/load-coverage source-path)
+        [covered-sites uncovered] (partition-by-coverage all-sites covered-lines)]
+    {:original-content original-content
+     :prev-date (extract-mutation-date original-content)
+     :prior-manifest prior-manifest
+     :analysis-content analysis-content
+     :forms forms
+     :module-unchanged? module-unchanged?
+     :all-sites all-sites
+     :covered-sites covered-sites
+     :uncovered uncovered
+     :sites nil
+     :manifest-content (embed-mutation-manifest analysis-content
+                                                (build-embedded-manifest forms (now-str)))
+     :changed-forms changed-forms}))
+
+(defn- default-since-last-run? [lines since-last-run mutate-all prior-manifest]
+  (and (nil? lines)
+       (not mutate-all)
+       (or since-last-run (some? prior-manifest))))
+
+(defn- select-mutation-sites [covered-sites lines since-last-run module-unchanged? changed-forms]
+  (cond
+    lines (filter-by-lines covered-sites lines)
+    module-unchanged? []
+    since-last-run (filter-by-form-indices covered-sites changed-forms)
+    :else covered-sites))
+
+(defn- print-mutation-warning [warning-threshold total-mutations]
+  (when (> total-mutations warning-threshold)
+    (println (format "WARNING: Found %d mutations. Consider splitting this module." total-mutations))))
+
+(defn- print-run-header [source-path prev-date all-sites covered-sites uncovered lines since-last-run prior-manifest module-unchanged? sites warning-threshold]
+  (println (format "=== Mutation Testing: %s ===" source-path))
+  (when prev-date
+    (println (format "Previous mutation test: %s" prev-date)))
+  (println (format "Found %d mutation sites (%d covered, %d uncovered)."
+                   (count all-sites) (count covered-sites) (count uncovered)))
+  (print-mutation-warning warning-threshold (count all-sites))
+  (when lines
+    (println (format "Filtering to lines: %s → %d mutations to test."
+                     (str/join "," (sort lines)) (count sites))))
+  (when since-last-run
+    (if prior-manifest
+      (if module-unchanged?
+        (println "Module hash unchanged; no mutations to test.")
+        (println (format "Filtering to changed top-level forms → %d mutations to test."
+                         (count sites))))
+      (println "No prior embedded manifest found; running all covered mutations.")))
+  (println))
+
+(defn- summarize-results [results lines since-last-run uncovered]
+  (let [killed (count (filter #(= :killed (:result %)) results))
+        total (count results)
+        pct (if (zero? total) 0.0 (* 100.0 (/ killed total)))
+        survivors (filter #(= :survived (:result %)) results)]
+    (print-summary killed total pct survivors (if (or lines since-last-run) 0 (count uncovered)))))
+
+(defn- run-mutation-suite [sites source-path analysis-content timeout-ms max-workers test-command]
+  (if (seq sites)
+    (run-mutations-parallel sites source-path analysis-content timeout-ms max-workers test-command)
+    []))
+
+(defn- with-baseline [test-command timeout-factor on-pass]
+  (print "Baseline: ") (flush)
+  (let [{baseline-result :result elapsed-ms :elapsed-ms} (runner/run-specs-timed test-command)
+        timeout-ms (* timeout-factor elapsed-ms)]
+    (if (= :survived baseline-result)
+      (do
+        (println (format "PASS (%.1fs, timeout %.1fs)"
+                         (/ elapsed-ms 1000.0) (/ timeout-ms 1000.0)))
+        (on-pass timeout-ms))
+      (println "FAIL — specs do not pass without mutations. Aborting."))))
+
+(defn- exit! [status]
+  (System/exit status))
+
 (defn run-mutation-testing
   "Run mutation testing on a single source file.
    Optional lines arg: set of line numbers to restrict testing to.
+   Default behavior uses differential mutation when a manifest exists.
    Optional timeout-factor arg: positive integer multiplier for mutation timeout.
    Optional test-command arg: command string for running tests.
-   Optional max-workers arg: positive integer worker cap."
-  ([source-path] (run-mutation-testing source-path nil 10 "clj -M:spec" nil))
-  ([source-path lines] (run-mutation-testing source-path lines 10 "clj -M:spec" nil))
+   Optional max-workers arg: positive integer worker cap.
+   Optional mutate-all arg forces a full run even when a manifest exists.
+   Optional mutation-warning arg controls the warning threshold."
+  ([source-path] (run-mutation-testing source-path nil 10 "clj -M:spec" nil false false 50))
+  ([source-path lines] (run-mutation-testing source-path lines 10 "clj -M:spec" nil false false 50))
   ([source-path lines timeout-factor test-command max-workers]
+   (run-mutation-testing source-path lines timeout-factor test-command max-workers false false 50))
+  ([source-path lines timeout-factor test-command max-workers since-last-run]
+   (run-mutation-testing source-path lines timeout-factor test-command max-workers since-last-run false 50))
+  ([source-path lines timeout-factor test-command max-workers since-last-run mutate-all mutation-warning]
    (when (restore-from-backup! source-path)
      (println "Restored source from backup (previous run was interrupted)."))
-   (let [original-content (slurp source-path)
-         prev-date (extract-mutation-date original-content)
-         analysis-content (if lines
-                            original-content
-                            (stamp-mutation-date original-content (today-str)))
-         forms (read-source-forms analysis-content)
-         all-sites (discover-all-mutations forms)
-         covered-lines (coverage/load-coverage source-path)
-         [covered-sites uncovered] (partition-by-coverage all-sites covered-lines)
-         sites (filter-by-lines covered-sites lines)]
-     (println (format "=== Mutation Testing: %s ===" source-path))
-     (when prev-date
-       (println (format "Previous mutation test: %s" prev-date)))
-     (println (format "Found %d mutation sites (%d covered, %d uncovered)."
-                      (count all-sites) (count covered-sites) (count uncovered)))
-     (when lines
-       (println (format "Filtering to lines: %s → %d mutations to test."
-                        (str/join "," (sort lines)) (count sites))))
-     (println)
-     (print "Baseline: ") (flush)
-     (let [{baseline-result :result elapsed-ms :elapsed-ms} (runner/run-specs-timed test-command)
-           timeout-ms (* timeout-factor elapsed-ms)]
-       (if (= :survived baseline-result)
-         (do
-           (println (format "PASS (%.1fs, timeout %.1fs)"
-                            (/ elapsed-ms 1000.0) (/ timeout-ms 1000.0)))
-           (when-not lines (print-uncovered uncovered))
-           (save-backup! source-path analysis-content)
-           (try
-             (let [results (run-mutations-parallel sites source-path
-                                                   analysis-content timeout-ms
-                                                   max-workers test-command)
-                   killed (count (filter #(= :killed (:result %)) results))
-                   total (count results)
-                   pct (if (zero? total) 0.0 (* 100.0 (/ killed total)))
-                   survivors (filter #(= :survived (:result %)) results)]
-               (print-summary killed total pct survivors (if lines 0 (count uncovered)))
-               (when-not lines
-                 (spit source-path analysis-content)))
-             (finally
-               (cleanup-backup! source-path))))
-         (println "FAIL — specs do not pass without mutations. Aborting."))))))
+   (let [manifest-detected? (some? (extract-embedded-manifest (slurp source-path)))
+         effective-since-last-run (default-since-last-run? lines since-last-run mutate-all manifest-detected?)
+         {:keys [prev-date prior-manifest analysis-content all-sites covered-sites uncovered
+                 module-unchanged? changed-forms manifest-content] :as context}
+         (mutation-run-context source-path effective-since-last-run)
+         sites (select-mutation-sites covered-sites lines effective-since-last-run module-unchanged? changed-forms)]
+     (print-run-header source-path prev-date all-sites covered-sites uncovered lines effective-since-last-run prior-manifest module-unchanged? sites mutation-warning)
+     (with-baseline
+       test-command
+       timeout-factor
+       (fn [timeout-ms]
+         (when-not (or lines effective-since-last-run)
+           (print-uncovered uncovered))
+         (save-backup! source-path manifest-content)
+         (try
+           (let [results (run-mutation-suite sites source-path analysis-content timeout-ms max-workers test-command)]
+             (summarize-results results lines effective-since-last-run uncovered)
+             (spit source-path manifest-content))
+           (finally
+             (cleanup-backup! source-path))))))))
+
+(defn- handle-main-result [validated]
+  (cond
+    (:help validated)
+    (println (:usage validated))
+
+    (:error validated)
+    (do
+      (println (:error validated))
+      (println)
+      (print (:usage validated))
+      (exit! 1))
+
+    :else
+    (run-mutation-testing (:source-path validated)
+                          (:lines validated)
+                          (:timeout-factor validated)
+                          (:test-command validated)
+                          (:max-workers validated)
+                          (:since-last-run validated)
+                          (:mutate-all validated)
+                          (:mutation-warning validated))))
 
 (defn -main [& args]
-  (let [validated (validate-args (vec args))]
-    (cond
-      (:help validated)
-      (println (:usage validated))
-
-      (:error validated)
-      (do
-        (println (:error validated))
-        (println)
-        (print (:usage validated))
-        (System/exit 1))
-
-      :else
-      (run-mutation-testing (:source-path validated)
-                            (:lines validated)
-                            (:timeout-factor validated)
-                            (:test-command validated)
-                            (:max-workers validated)))))
+  (handle-main-result (validate-args (vec args))))

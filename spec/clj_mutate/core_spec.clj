@@ -89,6 +89,20 @@
     (let [result (core/validate-args ["nonexistent.cljc"])]
       (should-contain :error result)))
 
+  (it "returns an error for unknown options"
+    (let [temp (java.io.File/createTempFile "src" ".cljc")]
+      (spit temp "(ns test-ns)")
+      (let [result (core/validate-args [(.getPath temp) "--bogus"])]
+        (should= "Unknown option: --bogus" (:error result))
+        (.delete temp))))
+
+  (it "returns an error for unexpected extra arguments"
+    (let [temp (java.io.File/createTempFile "src" ".cljc")]
+      (spit temp "(ns test-ns)")
+      (let [result (core/validate-args [(.getPath temp) "extra.cljc"])]
+        (should= "Unexpected extra argument: extra.cljc" (:error result))
+        (.delete temp))))
+
   (it "returns source-path when file exists"
     (let [temp (java.io.File/createTempFile "src" ".cljc")]
       (spit temp "(ns test-ns)")
@@ -96,8 +110,65 @@
         (should= (.getPath temp) (:source-path result))
         (should= 10 (:timeout-factor result))
         (should= "clj -M:spec" (:test-command result))
+        (should= false (:since-last-run result))
+        (should= false (:mutate-all result))
+        (should= 50 (:mutation-warning result))
         (should= nil (:max-workers result))
         (.delete temp))))
+
+  (it "parses --since-last-run"
+    (let [temp (java.io.File/createTempFile "src" ".cljc")]
+      (spit temp "(ns test-ns)")
+      (let [result (core/validate-args [(.getPath temp) "--since-last-run"])]
+        (should= true (:since-last-run result))
+        (.delete temp))))
+
+  (it "parses --mutate-all"
+    (let [temp (java.io.File/createTempFile "src" ".cljc")]
+      (spit temp "(ns test-ns)")
+      (let [result (core/validate-args [(.getPath temp) "--mutate-all"])]
+        (should= true (:mutate-all result))
+        (.delete temp))))
+
+  (it "parses --mutation-warning"
+    (let [temp (java.io.File/createTempFile "src" ".cljc")]
+      (spit temp "(ns test-ns)")
+      (let [result (core/validate-args [(.getPath temp) "--mutation-warning" "75"])]
+        (should= 75 (:mutation-warning result))
+        (.delete temp))))
+
+  (it "returns errors for missing option values"
+    (let [temp (java.io.File/createTempFile "src" ".cljc")]
+      (spit temp "(ns test-ns)")
+      (should= "Missing value for --lines."
+               (:error (core/validate-args [(.getPath temp) "--lines"])))
+      (should= "Missing value for --timeout-factor."
+               (:error (core/validate-args [(.getPath temp) "--timeout-factor"])))
+      (should= "Missing value for --test-command."
+               (:error (core/validate-args [(.getPath temp) "--test-command"])))
+      (should= "Missing value for --max-workers."
+               (:error (core/validate-args [(.getPath temp) "--max-workers"])))
+      (should= "Missing value for --mutation-warning."
+               (:error (core/validate-args [(.getPath temp) "--mutation-warning"])))
+      (.delete temp)))
+
+  (it "rejects combining --lines with --since-last-run in either order"
+    (let [temp (java.io.File/createTempFile "src" ".cljc")]
+      (spit temp "(ns test-ns)")
+      (should-contain :error
+                      (core/validate-args [(.getPath temp) "--lines" "3" "--since-last-run"]))
+      (should-contain :error
+                      (core/validate-args [(.getPath temp) "--since-last-run" "--lines" "3"]))
+      (.delete temp)))
+
+  (it "rejects combining --mutate-all with --lines or --since-last-run"
+    (let [temp (java.io.File/createTempFile "src" ".cljc")]
+      (spit temp "(ns test-ns)")
+      (should-contain :error
+                      (core/validate-args [(.getPath temp) "--mutate-all" "--lines" "3"]))
+      (should-contain :error
+                      (core/validate-args [(.getPath temp) "--since-last-run" "--mutate-all"]))
+      (.delete temp)))
 
   (it "parses --timeout-factor as a positive integer"
     (let [temp (java.io.File/createTempFile "src" ".cljc")]
@@ -120,6 +191,13 @@
         (should= "clj -M:all-tests" (:test-command result))
         (.delete temp))))
 
+  (it "returns an error for blank --test-command"
+    (let [temp (java.io.File/createTempFile "src" ".cljc")]
+      (spit temp "(ns test-ns)")
+      (let [result (core/validate-args [(.getPath temp) "--test-command" "   "])]
+        (should= "Missing value for --test-command." (:error result))
+        (.delete temp))))
+
   (it "parses --max-workers as a positive integer"
     (let [temp (java.io.File/createTempFile "src" ".cljc")]
       (spit temp "(ns test-ns)")
@@ -133,6 +211,13 @@
       (let [result (core/validate-args [(.getPath temp) "--max-workers" "0"])]
         (should-contain :error result)
         (.delete temp)))))
+
+  (it "returns an error for non-positive --mutation-warning"
+    (let [temp (java.io.File/createTempFile "src" ".cljc")]
+      (spit temp "(ns test-ns)")
+      (let [result (core/validate-args [(.getPath temp) "--mutation-warning" "0"])]
+        (should-contain :error result)
+        (.delete temp))))
 
 (describe "partition-by-coverage"
   (it "separates covered from uncovered sites"
@@ -183,33 +268,79 @@
       (should-contain "1/1 mutants killed" report)
       (should-contain "3 uncovered" report))))
 
-(describe "extract-mutation-date"
-  (it "returns nil when no mutation comment exists"
+(describe "embedded manifest"
+  (it "returns nil when no mutation metadata exists"
     (should= nil (core/extract-mutation-date "(ns foo)\n(defn bar [] 42)")))
 
-  (it "extracts date from mutation comment at start of file"
+  (it "extracts date from embedded manifest"
+    (let [content (core/embed-mutation-manifest
+                    "(ns foo)\n(defn bar [] 42)\n"
+                    {:version 1
+                     :tested-at "2026-02-22T10:15:30-06:00"
+                     :module-hash "module-123"
+                     :forms [{:id "defn/bar" :hash "123" :line 2 :end-line 2 :kind "defn"}]})]
+      (should= "2026-02-22T10:15:30-06:00" (core/extract-mutation-date content))
+      (should= {:version 1
+                :tested-at "2026-02-22T10:15:30-06:00"
+                :module-hash "module-123"
+                :forms [{:id "defn/bar" :hash "123" :line 2 :end-line 2 :kind "defn"}]}
+               (core/extract-embedded-manifest content))))
+
+  (it "falls back to legacy top stamp"
     (should= "2026-02-22"
              (core/extract-mutation-date
                ";; mutation-tested: 2026-02-22\n(ns foo)\n(defn bar [] 42)")))
 
-  (it "returns nil when comment is not at start of file"
-    (should= nil
-             (core/extract-mutation-date
-               "(ns foo)\n;; mutation-tested: 2026-02-22\n(defn bar [] 42)"))))
+  (it "strips legacy and embedded metadata before analysis"
+    (let [content (str ";; mutation-tested: 2026-02-20\n"
+                       "(ns foo)\n(defn bar [] 42)\n\n"
+                       ";; clj-mutate-manifest-begin\n"
+                       ";; {:version 1 :tested-at \"2026-02-22T10:15:30-06:00\" :module-hash \"module-123\" :forms []}\n"
+                       ";; clj-mutate-manifest-end\n")]
+      (should= "(ns foo)\n(defn bar [] 42)\n"
+               (core/strip-mutation-metadata content))))
 
-(describe "stamp-mutation-date"
-  (it "adds date comment to file without one"
-    (should= ";; mutation-tested: 2026-02-22\n(ns foo)\n(defn bar [] 42)"
-             (core/stamp-mutation-date "(ns foo)\n(defn bar [] 42)" "2026-02-22")))
+  (it "replaces an existing footer manifest"
+    (let [original (core/embed-mutation-manifest
+                     "(ns foo)\n(defn bar [] 42)\n"
+                     {:version 1 :tested-at "2026-02-20T08:00:00-06:00" :module-hash "old-module" :forms []})
+          updated (core/embed-mutation-manifest
+                    original
+                    {:version 1 :tested-at "2026-02-22T10:15:30-06:00" :module-hash "new-module" :forms [{:id "defn/bar" :hash "1"}]})]
+      (should= "2026-02-22T10:15:30-06:00" (core/extract-mutation-date updated))
+      (should-contain "clj-mutate-manifest-begin" updated)
+      (should= 1 (count (re-seq #"clj-mutate-manifest-begin" updated))))))
 
-  (it "replaces existing date comment"
-    (should= ";; mutation-tested: 2026-02-23\n(ns foo)\n(defn bar [] 42)"
-             (core/stamp-mutation-date
-               ";; mutation-tested: 2026-02-22\n(ns foo)\n(defn bar [] 42)"
-               "2026-02-23"))))
+(describe "top-level form manifest"
+  (it "tracks top-level forms with ids, spans, and hashes"
+    (let [forms (core/read-source-forms "(ns foo)\n(defn bar [] 42)\n(defmethod quux :x [] true)\n")
+          manifest (core/top-level-form-manifest forms)]
+      (should= "form/0/ns" (:id (first manifest)))
+      (should= "defn/bar" (:id (second manifest)))
+      (should= "defmethod/quux/:x" (:id (nth manifest 2)))
+      (should= 2 (:line (second manifest)))
+      (should= 2 (:end-line (second manifest)))
+      (should-not-be-nil (:hash (second manifest)))))
 
-(describe "run-mutation-testing stamps date"
-  (it "stamps the source file with today's date after testing"
+  (it "computes a semantic module hash from parsed forms"
+    (let [a (core/read-source-forms "(ns foo)\n(defn bar [] 42)\n")
+          b (core/read-source-forms "(ns foo)\n(defn bar [] 42)\n")
+          c (core/read-source-forms "(ns foo)\n(defn bar [] 43)\n")]
+      (should= (core/module-hash a) (core/module-hash b))
+      (should-not= (core/module-hash a) (core/module-hash c))))
+
+  (it "finds changed top-level form indices from a prior manifest"
+    (let [forms (core/read-source-forms "(ns foo)\n(defn unchanged [] 1)\n(defn changed [] 3)\n")
+          prior {:version 1
+                 :tested-at "2026-02-22T10:15:30-06:00"
+                 :module-hash "old-module"
+                 :forms [{:id "form/0/ns" :hash (:hash (first (core/top-level-form-manifest forms)))}
+                         {:id "defn/unchanged" :hash (:hash (second (core/top-level-form-manifest forms)))}
+                         {:id "defn/changed" :hash "old-hash"}]}]
+      (should= #{2} (core/changed-form-indices forms prior)))))
+
+(describe "run-mutation-testing embeds manifest"
+  (it "writes the footer manifest after a full run"
     (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
           temp-path (.getPath temp-file)
           original "(ns test-ns)\n(defn foo [] (+ 1 2))\n"]
@@ -227,14 +358,23 @@
                                     (core/mutate-and-test source-path content nil site timeout-ms test-command))
                                   sites)))]
         (core/run-mutation-testing temp-path)
-        (let [stamped (slurp temp-path)]
-          (should-not-be-nil (core/extract-mutation-date stamped))))
+        (let [updated (slurp temp-path)]
+          (should-not-be-nil (core/extract-embedded-manifest updated))
+          (should= (core/module-hash (core/read-source-forms (core/strip-mutation-metadata updated)))
+                   (:module-hash (core/extract-embedded-manifest updated)))
+          (should-contain "clj-mutate-manifest-begin" updated)))
       (.delete temp-file)))
 
   (it "reports previous mutation test date"
     (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
           temp-path (.getPath temp-file)
-          original ";; mutation-tested: 2026-01-15\n(ns test-ns)\n(defn foo [] (+ 1 2))\n"]
+          original (core/embed-mutation-manifest
+                     "(ns test-ns)\n(defn foo [] (+ 1 2))\n"
+                     {:version 1
+                      :tested-at "2026-01-15T09:30:00-06:00"
+                      :module-hash "module-123"
+                      :forms [{:id "form/0/ns" :hash "ns"}
+                              {:id "defn/foo" :hash "foo"}]})]
       (spit temp-path original)
       (with-redefs [runner/run-specs (fn [& _] :killed)
                     runner/run-specs-timed (fn [cmd]
@@ -248,10 +388,112 @@
                       (doall (map (fn [site]
                                     (core/mutate-and-test source-path content nil site timeout-ms test-command))
                                   sites)))]
-        (let [captured (with-out-str
-                         (core/run-mutation-testing temp-path))]
-          (should-contain "Previous mutation test: 2026-01-15" captured)))
+                        (let [captured (with-out-str
+                                         (core/run-mutation-testing temp-path))]
+          (should-contain "Previous mutation test: 2026-01-15T09:30:00-06:00" captured)))
       (.delete temp-file))))
+
+  (it "filters to changed top-level forms with --since-last-run"
+    (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
+          temp-path (.getPath temp-file)
+          initial "(ns test-ns)\n(defn unchanged [] (+ 1 2))\n(defn changed [] (+ 3 4))\n"
+          updated "(ns test-ns)\n(defn unchanged [] (+ 1 2))\n(defn changed [] (+ 30 4))\n"
+          prior-manifest (core/build-embedded-manifest (core/read-source-forms initial) "2026-02-20T08:00:00-06:00")
+          source-with-manifest (core/embed-mutation-manifest initial prior-manifest)
+          captured-sites (atom nil)]
+      (spit temp-path source-with-manifest)
+      (spit temp-path updated)
+      (spit temp-path (core/embed-mutation-manifest updated prior-manifest))
+      (with-redefs [runner/run-specs (fn [& _] :killed)
+                    runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
+                    coverage/load-coverage (fn [_] nil)
+                    core/run-mutations-parallel
+                    (fn [sites _ _ _ _ _]
+                      (reset! captured-sites sites)
+                      (mapv (fn [site] {:site site :result :killed :timeout? false}) sites))]
+        (core/run-mutation-testing temp-path nil 10 "clj -M:spec" nil true)
+        (should (seq @captured-sites))
+        (should (every? #(= 2 (:form-index %)) @captured-sites))
+        (should (re-find #"\d{4}-\d{2}-\d{2}T" (:tested-at (core/extract-embedded-manifest (slurp temp-path))))))
+      (.delete temp-file)))
+
+  (it "short-circuits --since-last-run when the module hash is unchanged"
+    (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
+          temp-path (.getPath temp-file)
+          source "(ns test-ns)\n(defn unchanged [] (+ 1 2))\n"
+          prior-manifest (core/build-embedded-manifest (core/read-source-forms source) "2026-02-20T08:00:00-06:00")
+          source-with-manifest (core/embed-mutation-manifest source prior-manifest)
+          called? (atom false)]
+      (spit temp-path source-with-manifest)
+      (with-redefs [runner/run-specs (fn [& _] :killed)
+                    runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
+                    coverage/load-coverage (fn [_] nil)
+                    core/run-mutations-parallel
+                    (fn [& _]
+                      (reset! called? true)
+                      [])]
+        (let [output (with-out-str
+                       (core/run-mutation-testing temp-path nil 10 "clj -M:spec" nil true))]
+          (should= false @called?)
+          (should-contain "Module hash unchanged; no mutations to test." output)))
+      (.delete temp-file)))
+
+  (it "defaults to differential mutation when a manifest exists"
+    (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
+          temp-path (.getPath temp-file)
+          initial "(ns test-ns)\n(defn unchanged [] (+ 1 2))\n(defn changed [] (+ 3 4))\n"
+          updated "(ns test-ns)\n(defn unchanged [] (+ 1 2))\n(defn changed [] (+ 30 4))\n"
+          prior-manifest (core/build-embedded-manifest (core/read-source-forms initial) "2026-02-20T08:00:00-06:00")
+          captured-sites (atom nil)]
+      (spit temp-path (core/embed-mutation-manifest updated prior-manifest))
+      (with-redefs [runner/run-specs (fn [& _] :killed)
+                    runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
+                    coverage/load-coverage (fn [_] nil)
+                    core/run-mutations-parallel
+                    (fn [sites _ _ _ _ _]
+                      (reset! captured-sites sites)
+                      (mapv (fn [site] {:site site :result :killed :timeout? false}) sites))]
+        (let [output (with-out-str (core/run-mutation-testing temp-path))]
+          (should (seq @captured-sites))
+          (should (every? #(= 2 (:form-index %)) @captured-sites))
+          (should-contain "Filtering to changed top-level forms" output)))
+      (.delete temp-file)))
+
+  (it "uses --mutate-all to override default differential mutation"
+    (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
+          temp-path (.getPath temp-file)
+          source "(ns test-ns)\n(defn foo [] (+ 1 2))\n"
+          prior-manifest (core/build-embedded-manifest (core/read-source-forms source) "2026-02-20T08:00:00-06:00")
+          captured-sites (atom nil)]
+      (spit temp-path (core/embed-mutation-manifest source prior-manifest))
+      (with-redefs [runner/run-specs (fn [& _] :killed)
+                    runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
+                    coverage/load-coverage (fn [_] nil)
+                    core/run-mutations-parallel
+                    (fn [sites _ _ _ _ _]
+                      (reset! captured-sites sites)
+                      (mapv (fn [site] {:site site :result :killed :timeout? false}) sites))]
+        (let [output (with-out-str
+                       (core/run-mutation-testing temp-path nil 10 "clj -M:spec" nil false true 50))]
+          (should= 2 (count @captured-sites))
+          (should-not (re-find #"changed top-level forms" output))))
+      (.delete temp-file)))
+
+  (it "prints a warning when mutation count exceeds the threshold"
+    (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
+          temp-path (.getPath temp-file)
+          source "(ns test-ns)\n(defn foo [] (+ 1 2))\n"]
+      (spit temp-path source)
+      (with-redefs [runner/run-specs (fn [& _] :killed)
+                    runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
+                    coverage/load-coverage (fn [_] nil)
+                    core/run-mutations-parallel
+                    (fn [sites _ _ _ _ _]
+                      (mapv (fn [site] {:site site :result :killed :timeout? false}) sites))]
+        (let [output (with-out-str
+                       (core/run-mutation-testing temp-path nil 10 "clj -M:spec" nil false false 1))]
+          (should-contain "WARNING: Found 2 mutations. Consider splitting this module." output)))
+      (.delete temp-file)))
 
 (describe "run-mutation-testing options"
   (it "uses timeout-factor and test-command"
@@ -275,6 +517,50 @@
         (should= 600 @captured-timeout)
         (should= "clj -M:all-tests" @captured-command))
       (.delete temp-file))))
+
+(describe "handle-main-result"
+  (it "prints help without exiting"
+    (let [output (with-out-str (#'core/handle-main-result {:help true :usage "Usage text"}))]
+      (should-contain "Usage text" output)))
+
+  (it "prints errors and exits with status 1"
+    (let [status (atom nil)
+          output (with-out-str
+                   (with-redefs [core/exit! (fn [s] (reset! status s))]
+                     (#'core/handle-main-result {:error "Bad args" :usage "Usage text"})))]
+      (should= 1 @status)
+      (should-contain "Bad args" output)
+      (should-contain "Usage text" output)))
+
+  (it "dispatches to run-mutation-testing for valid input"
+    (let [received (atom nil)]
+      (with-redefs [core/run-mutation-testing
+                    (fn [source-path lines timeout-factor test-command max-workers since-last-run mutate-all mutation-warning]
+                      (reset! received {:source-path source-path
+                                        :lines lines
+                                        :timeout-factor timeout-factor
+                                        :test-command test-command
+                                        :max-workers max-workers
+                                        :since-last-run since-last-run
+                                        :mutate-all mutate-all
+                                        :mutation-warning mutation-warning}))]
+        (#'core/handle-main-result {:source-path "src/foo.cljc"
+                                    :lines #{3}
+                                    :timeout-factor 7
+                                    :test-command "clj -M:all-tests"
+                                    :max-workers 2
+                                    :since-last-run true
+                                    :mutate-all false
+                                    :mutation-warning 75})
+        (should= {:source-path "src/foo.cljc"
+                  :lines #{3}
+                  :timeout-factor 7
+                  :test-command "clj -M:all-tests"
+                  :max-workers 2
+                  :since-last-run true
+                  :mutate-all false
+                  :mutation-warning 75}
+                 @received)))))
 
 (describe "line numbers stable across stamp"
   (it "reported survivor lines from full run work with --lines"

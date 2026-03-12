@@ -143,3 +143,30 @@
           one-site (first (filter #(= (:original %) 1) sites))
           result (m/apply-mutation form (:index one-site))]
       (should= '(+ 0 2) result))))
+
+(describe "rebuild-coll"
+  (it "rebuilds seqs by walking each child"
+    (let [walk (fn [_ _ node] (if (number? node) (inc node) node))]
+      (should= '(+ 2 3) (#'m/rebuild-coll walk nil nil '(+ 1 2)))))
+
+  (it "rebuilds vectors by walking each child"
+    (let [walk (fn [_ _ node] (if (number? node) (inc node) node))]
+      (should= [2 3] (#'m/rebuild-coll walk nil nil [1 2]))))
+
+  (it "rebuilds maps by walking keys and values"
+    (let [walk (fn [_ _ node]
+                 (cond
+                   (= node :a) :b
+                   (= node 1) 2
+                   :else node))]
+      (should= {:b 2} (#'m/rebuild-coll walk nil nil {:a 1}))))
+
+  (it "rebuilds sets by walking each member"
+    (let [walk (fn [_ _ node] (if (number? node) (inc node) node))]
+      (should= #{2 3} (#'m/rebuild-coll walk nil nil #{1 2}))))
+
+  (it "returns non-collections unchanged"
+    (let [walk (fn [_ _ node] (if (number? node) (inc node) node))]
+      (should= 42 (#'m/rebuild-coll walk nil nil 42)))))
+
+(run-specs)
