@@ -2,6 +2,7 @@
   (:require [speclj.core :refer :all]
             [clj-mutate.core :as core]
             [clj-mutate.coverage :as coverage]
+            [clj-mutate.manifest :as manifest]
             [clj-mutate.runner :as runner]
             [clj-mutate.workers :as workers]))
 
@@ -137,6 +138,13 @@
         (should= true (:scan result))
         (.delete temp))))
 
+  (it "parses --update-manifest"
+    (let [temp (java.io.File/createTempFile "src" ".cljc")]
+      (spit temp "(ns test-ns)")
+      (let [result (core/validate-args [(.getPath temp) "--update-manifest"])]
+        (should= true (:update-manifest result))
+        (.delete temp))))
+
   (it "parses --mutation-warning"
     (let [temp (java.io.File/createTempFile "src" ".cljc")]
       (spit temp "(ns test-ns)")
@@ -192,6 +200,25 @@
                       (core/validate-args [(.getPath temp) "--scan" "--test-command" "clj -M:all-tests"]))
       (should-contain :error
                       (core/validate-args [(.getPath temp) "--scan" "--max-workers" "2"]))
+      (.delete temp)))
+
+  (it "rejects combining --update-manifest with mutation execution options"
+    (let [temp (java.io.File/createTempFile "src" ".cljc")]
+      (spit temp "(ns test-ns)")
+      (should-contain :error
+                      (core/validate-args [(.getPath temp) "--update-manifest" "--scan"]))
+      (should-contain :error
+                      (core/validate-args [(.getPath temp) "--update-manifest" "--lines" "3"]))
+      (should-contain :error
+                      (core/validate-args [(.getPath temp) "--update-manifest" "--since-last-run"]))
+      (should-contain :error
+                      (core/validate-args [(.getPath temp) "--update-manifest" "--mutate-all"]))
+      (should-contain :error
+                      (core/validate-args [(.getPath temp) "--update-manifest" "--timeout-factor" "7"]))
+      (should-contain :error
+                      (core/validate-args [(.getPath temp) "--update-manifest" "--test-command" "clj -M:all-tests"]))
+      (should-contain :error
+                      (core/validate-args [(.getPath temp) "--update-manifest" "--max-workers" "2"]))
       (.delete temp)))
 
   (it "parses --timeout-factor as a positive integer"
@@ -619,6 +646,26 @@
       (should-contain "Found 2 mutation sites." output)
       (should-contain "Changed mutation sites: 0" output))))
 
+(describe "update-manifest!"
+  (it "rewrites the embedded manifest for the current file content"
+    (let [temp-file (java.io.File/createTempFile "manifest" ".cljc")
+          temp-path (.getPath temp-file)
+          original "(ns test-ns)\n(defn foo [] (+ 1 2))\n"
+          prior (core/build-embedded-manifest (core/read-source-forms original)
+                                              "2026-02-20T08:00:00-06:00")
+          stamped (core/embed-mutation-manifest "(ns test-ns)\n(defn foo [] (+ 1 20))\n" prior)]
+      (spit temp-path stamped)
+      (with-redefs [manifest/now-str (fn [] "2026-03-12T12:00:00-05:00")]
+        (#'core/update-manifest! temp-path))
+      (let [updated (slurp temp-path)
+            embedded (core/extract-embedded-manifest updated)
+            analysis-content (core/strip-mutation-metadata updated)
+            forms (core/read-source-forms analysis-content)]
+        (should= "2026-03-12T12:00:00-05:00" (:tested-at embedded))
+        (should= (core/module-hash forms) (:module-hash embedded))
+        (should= (core/top-level-form-manifest forms) (:forms embedded)))
+      (.delete temp-file))))
+
 (describe "handle-main-result"
   (it "prints help without exiting"
     (let [output (with-out-str (#'core/handle-main-result {:help true :usage "Usage text"}))]
@@ -644,6 +691,14 @@
         (should= {:source-path "src/foo.cljc"
                   :mutation-warning 75}
                  @received))))
+
+  (it "dispatches to update-manifest! for update-manifest input"
+    (let [received (atom nil)]
+      (with-redefs [core/update-manifest! (fn [source-path]
+                                            (reset! received source-path))]
+        (#'core/handle-main-result {:source-path "src/foo.cljc"
+                                    :update-manifest true})
+        (should= "src/foo.cljc" @received))))
 
   (it "dispatches to run-mutation-testing for valid input"
     (let [received (atom nil)]

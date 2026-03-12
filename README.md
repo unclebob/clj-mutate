@@ -25,6 +25,9 @@ clj -M:mutate src/myapp/foo.cljc
 # Scan a file for mutation counts without running coverage or specs
 clj -M:mutate src/myapp/foo.cljc --scan
 
+# Rewrite the embedded manifest without running coverage or mutations
+clj -M:mutate src/myapp/foo.cljc --update-manifest
+
 # Retest only specific lines (e.g. survivors from a previous run)
 clj -M:mutate src/myapp/foo.cljc --lines 45,67,89
 
@@ -63,6 +66,8 @@ The tool automatically:
 - total mutation sites
 - changed mutation sites relative to the embedded manifest
 - the standard mutation-count warning
+
+`--update-manifest` rewrites the embedded footer manifest for the file's current contents without running coverage, baseline specs, or mutation workers.
 
 ## Recommended Workflow
 

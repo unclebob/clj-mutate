@@ -9,6 +9,7 @@
 - A source file path.
 - Optional CLI arguments:
   - `--scan`
+  - `--update-manifest`
   - `--lines L1,L2,...`
   - `--since-last-run`
   - `--mutate-all`
@@ -39,6 +40,7 @@
 ## Mutation Selection
 
 - `--scan` reports mutation counts only and does not execute mutation testing.
+- `--update-manifest` rewrites the embedded manifest for the current file contents without executing mutation testing.
 - `--lines` restricts execution to covered mutation sites on the specified source lines.
 - `--since-last-run` restricts execution to covered mutation sites in changed top-level forms relative to the embedded manifest.
 - `--mutate-all` forces execution of all covered mutation sites, even when a manifest exists.
@@ -77,6 +79,7 @@
 
 - `--scan` does not run coverage refresh, baseline specs, or mutation workers.
 - `--scan` reports total mutation sites and changed mutation sites relative to the embedded manifest.
+- `--update-manifest` does not run coverage refresh, baseline specs, or mutation workers.
 - The tool runs a baseline test command first.
 - The default test command is `clj -M:spec --tag ~no-mutate`.
 - Users may override the test runner command with `--test-command CMD`.
@@ -105,7 +108,8 @@
 
 ## CLI Constraints
 
-- `--scan` may not be combined with `--lines`, `--since-last-run`, `--mutate-all`, `--timeout-factor`, `--test-command`, or `--max-workers`.
+- `--scan` may not be combined with `--update-manifest`, `--lines`, `--since-last-run`, `--mutate-all`, `--timeout-factor`, `--test-command`, or `--max-workers`.
+- `--update-manifest` may not be combined with `--scan`, `--lines`, `--since-last-run`, `--mutate-all`, `--timeout-factor`, `--test-command`, or `--max-workers`.
 - `--lines` may not be combined with `--since-last-run`.
 - `--lines` may not be combined with `--mutate-all`.
 - `--since-last-run` may not be combined with `--mutate-all`.
@@ -115,5 +119,6 @@
 ## Postconditions
 
 - On successful mutation runs, the source file ends with an updated embedded manifest.
+- `--update-manifest` updates the embedded manifest even though no mutation run occurred.
 - On baseline failure, mutation execution does not proceed.
 - On interrupted runs, a backup file allows restoration on the next invocation.
