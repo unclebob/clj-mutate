@@ -112,6 +112,10 @@ clj -M:mutate src/myapp/foo.cljc --since-last-run
 
 This compares current top-level forms with the footer manifest from the last successful mutation run and tests only forms whose hashes changed.
 
+Differential summaries also report the change surface area in two buckets:
+- mutations in new top-level forms
+- mutations in manifest-violating top-level forms
+
 To force a full rerun on a file with a manifest:
 
 ```bash

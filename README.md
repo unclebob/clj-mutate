@@ -115,6 +115,10 @@ For local incremental work, once a file has a footer manifest the default run is
 clj -M:mutate src/myapp/foo.cljc --since-last-run
 ```
 
+Differential summaries report the change surface area in two buckets:
+- mutations in new top-level forms
+- mutations in manifest-violating top-level forms
+
 To force a full rerun on a file with a manifest:
 
 ```bash
