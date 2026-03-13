@@ -69,9 +69,15 @@
 - A module-wide semantic hash is checked first.
 - If the module hash is unchanged, zero mutations are executed and the run reports that no mutations need testing.
 - If the module hash differs, top-level form hashes determine which forms changed.
-- Differential summaries report the change surface area as:
-  - mutations in new top-level forms
-  - mutations in manifest-violating top-level forms
+- Differential run headers report:
+  - total mutation sites
+  - covered mutation sites
+  - uncovered mutation sites
+  - changed mutation sites
+  - whether a manifest exists
+  - whether the module hash changed
+  - differential surface area
+  - manifest-violating surface area
 
 ## Coverage Behavior
 
@@ -103,10 +109,9 @@
 - The tool prints:
   - source path
   - previous mutation timestamp when available
-  - total mutation counts
+  - before baseline and worker execution, total/covered/uncovered/changed mutation counts plus manifest and differential-surface metrics
   - per-mutant progress
   - summary with killed/survived counts
-  - for differential runs, change-surface-area counts for new forms and manifest-violating forms
 - When total discovered mutations exceed `--mutation-warning`, the tool prints:
   - `WARNING: Found <N> mutations. Consider splitting this module.`
 - Default warning threshold is `50`.

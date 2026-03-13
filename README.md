@@ -115,9 +115,15 @@ For local incremental work, once a file has a footer manifest the default run is
 clj -M:mutate src/myapp/foo.cljc --since-last-run
 ```
 
-Differential summaries report the change surface area in two buckets:
-- mutations in new top-level forms
-- mutations in manifest-violating top-level forms
+Before baseline and worker execution, a mutation run prints:
+- total mutation sites
+- covered mutation sites
+- uncovered mutation sites
+- changed mutation sites
+- whether a manifest exists
+- whether the module hash changed
+- differential surface area
+- manifest-violating surface area
 
 To force a full rerun on a file with a manifest:
 
