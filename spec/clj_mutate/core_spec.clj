@@ -456,7 +456,7 @@
     (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
           temp-path (.getPath temp-file)
           initial "(ns test-ns)\n(defn unchanged [] (+ 1 2))\n(defn changed [] (+ 3 4))\n"
-          updated "(ns test-ns)\n(defn unchanged [] (+ 1 2))\n(defn changed [] (+ 30 4))\n"
+          updated "(ns test-ns)\n(defn unchanged [] (+ 1 2))\n(defn changed [] (+ 30 4))\n(defn added [] (+ 5 6))\n"
           prior-manifest (core/build-embedded-manifest (core/read-source-forms initial) "2026-02-20T08:00:00-06:00")
           source-with-manifest (core/embed-mutation-manifest initial prior-manifest)
           captured-sites (atom nil)]
@@ -470,9 +470,12 @@
                     (fn [sites _ _ _ _ _]
                       (reset! captured-sites sites)
                       (mapv (fn [site] {:site site :result :killed :timeout? false}) sites))]
-        (core/run-mutation-testing temp-path nil 10 "clj -M:spec" nil true)
+        (let [output (with-out-str
+                       (core/run-mutation-testing temp-path nil 10 "clj -M:spec" nil true))]
+          (should-contain "Change surface area: 2 mutations in new top-level forms" output)
+          (should-contain "Change surface area: 2 mutations in manifest-violating top-level forms" output))
         (should (seq @captured-sites))
-        (should (every? #(= 2 (:form-index %)) @captured-sites))
+        (should= #{2 3} (set (map :form-index @captured-sites)))
         (should (re-find #"\d{4}-\d{2}-\d{2}T" (:tested-at (core/extract-embedded-manifest (slurp temp-path))))))
       (.delete temp-file)))
 
@@ -494,7 +497,9 @@
         (let [output (with-out-str
                        (core/run-mutation-testing temp-path nil 10 "clj -M:spec" nil true))]
           (should= false @called?)
-          (should-contain "Module hash unchanged; no mutations to test." output)))
+          (should-contain "Module hash unchanged; no mutations to test." output)
+          (should-contain "Change surface area: 0 mutations in new top-level forms" output)
+          (should-contain "Change surface area: 0 mutations in manifest-violating top-level forms" output)))
       (.delete temp-file)))
 
   (it "defaults to differential mutation when a manifest exists"

@@ -28,8 +28,12 @@
         module-unchanged? (and since-last-run
                                prior-manifest
                                (= current-module-hash (:module-hash prior-manifest)))
-        changed-forms (when (and since-last-run prior-manifest (not module-unchanged?))
-                        (manifest/changed-form-indices forms prior-manifest))
+        {:keys [new-form-indices manifest-violating-form-indices changed-form-indices]}
+        (if (and since-last-run prior-manifest (not module-unchanged?))
+          (manifest/changed-form-indices-by-reason forms prior-manifest)
+          {:new-form-indices #{}
+           :manifest-violating-form-indices #{}
+           :changed-form-indices nil})
         all-sites (source/discover-all-mutations forms)
         covered-lines (coverage/load-coverage source-path)
         [covered-sites uncovered] (source/partition-by-coverage all-sites covered-lines)]
@@ -39,13 +43,15 @@
      :analysis-content analysis-content
      :forms forms
      :module-unchanged? module-unchanged?
+     :new-form-indices new-form-indices
+     :manifest-violating-form-indices manifest-violating-form-indices
      :all-sites all-sites
      :covered-sites covered-sites
      :uncovered uncovered
      :sites nil
      :manifest-content (manifest/embed-mutation-manifest analysis-content
                                                         (manifest/build-embedded-manifest forms (manifest/now-str)))
-     :changed-forms changed-forms}))
+     :changed-forms changed-form-indices}))
 
 (defn default-since-last-run?
   [lines since-last-run mutate-all prior-manifest]
@@ -117,12 +123,22 @@
     (doseq [site uncovered]
       (println (format "  line %d: %s" (:line site) (:description site))))))
 
+(defn differential-site-counts
+  [sites new-form-indices manifest-violating-form-indices]
+  {:new-form-mutations (count (filter #(contains? new-form-indices (:form-index %)) sites))
+   :manifest-violating-form-mutations (count (filter #(contains? manifest-violating-form-indices (:form-index %)) sites))})
+
 (defn- print-summary
-  [killed total pct survivors uncovered-count]
+  [killed total pct survivors uncovered-count differential-counts]
   (println (format "\n=== Summary ==="))
   (println (format "%d/%d mutants killed (%.1f%%)" killed total pct))
   (when (pos? uncovered-count)
     (println (format "%d uncovered mutations skipped" uncovered-count)))
+  (when differential-counts
+    (println (format "Change surface area: %d mutations in new top-level forms"
+                     (:new-form-mutations differential-counts)))
+    (println (format "Change surface area: %d mutations in manifest-violating top-level forms"
+                     (:manifest-violating-form-mutations differential-counts))))
   (when (seq survivors)
     (println "Survivors:")
     (doseq [r survivors]
@@ -132,12 +148,13 @@
                        (:description (:site r)))))))
 
 (defn summarize-results
-  [results lines since-last-run uncovered]
+  [results lines since-last-run uncovered differential-counts]
   (let [killed (count (filter #(= :killed (:result %)) results))
         total (count results)
         pct (if (zero? total) 0.0 (* 100.0 (/ killed total)))
         survivors (filter #(= :survived (:result %)) results)]
-    (print-summary killed total pct survivors (if (or lines since-last-run) 0 (count uncovered)))))
+    (print-summary killed total pct survivors (if (or lines since-last-run) 0 (count uncovered))
+                   differential-counts)))
 
 (defn run-mutation-suite
   [sites source-path analysis-content timeout-ms max-workers test-command]
@@ -159,5 +176,5 @@
       (println "FAIL — specs do not pass without mutations. Aborting."))))
 
 ;; clj-mutate-manifest-begin
-;; {:version 1, :tested-at "2026-03-12T09:07:06.527108-05:00", :module-hash "1934561817", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line 7, :hash "673503783"} {:id "defn/filter-by-lines", :kind "defn", :line 9, :end-line 13, :hash "642993194"} {:id "defn/filter-by-form-indices", :kind "defn", :line 15, :end-line 19, :hash "554023203"} {:id "defn/mutation-run-context", :kind "defn", :line 21, :end-line 48, :hash "-199343365"} {:id "defn/default-since-last-run?", :kind "defn", :line 50, :end-line 54, :hash "-71751391"} {:id "defn/select-mutation-sites", :kind "defn", :line 56, :end-line 62, :hash "-1457564386"} {:id "defn/print-mutation-warning", :kind "defn", :line 64, :end-line 67, :hash "-8091185"} {:id "defn-/count-changed-sites", :kind "defn-", :line 69, :end-line 74, :hash "2117283179"} {:id "defn/scan-mutation-sites", :kind "defn", :line 76, :end-line 90, :hash "-777824472"} {:id "defn/print-run-header", :kind "defn", :line 92, :end-line 110, :hash "-2011127734"} {:id "defn/print-uncovered", :kind "defn", :line 112, :end-line 118, :hash "-1174101582"} {:id "defn-/print-summary", :kind "defn-", :line 120, :end-line 132, :hash "-647776276"} {:id "defn/summarize-results", :kind "defn", :line 134, :end-line 140, :hash "617629029"} {:id "defn/run-mutation-suite", :kind "defn", :line 142, :end-line 146, :hash "307720017"} {:id "defn/with-baseline", :kind "defn", :line 148, :end-line 159, :hash "2111533211"}]}
+;; {:version 1, :tested-at "2026-03-13T07:03:17.991275-05:00", :module-hash "-998133929", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line 7, :hash "673503783"} {:id "defn/filter-by-lines", :kind "defn", :line 9, :end-line 13, :hash "1453026535"} {:id "defn/filter-by-form-indices", :kind "defn", :line 15, :end-line 19, :hash "174051725"} {:id "defn/mutation-run-context", :kind "defn", :line 21, :end-line 54, :hash "547762329"} {:id "defn/default-since-last-run?", :kind "defn", :line 56, :end-line 60, :hash "-71751391"} {:id "defn/select-mutation-sites", :kind "defn", :line 62, :end-line 68, :hash "-1457564386"} {:id "defn/print-mutation-warning", :kind "defn", :line 70, :end-line 73, :hash "-8091185"} {:id "defn-/count-changed-sites", :kind "defn-", :line 75, :end-line 80, :hash "2117283179"} {:id "defn/scan-mutation-sites", :kind "defn", :line 82, :end-line 96, :hash "-777824472"} {:id "defn/print-run-header", :kind "defn", :line 98, :end-line 116, :hash "-2011127734"} {:id "defn/print-uncovered", :kind "defn", :line 118, :end-line 124, :hash "-1174101582"} {:id "defn/differential-site-counts", :kind "defn", :line 126, :end-line 129, :hash "1654262067"} {:id "defn-/print-summary", :kind "defn-", :line 131, :end-line 148, :hash "-898354915"} {:id "defn/summarize-results", :kind "defn", :line 150, :end-line 157, :hash "393300427"} {:id "defn/run-mutation-suite", :kind "defn", :line 159, :end-line 163, :hash "307720017"} {:id "defn/with-baseline", :kind "defn", :line 165, :end-line 176, :hash "2111533211"}]}
 ;; clj-mutate-manifest-end

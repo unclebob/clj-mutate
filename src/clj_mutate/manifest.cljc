@@ -14,7 +14,8 @@
          (java.util.regex.Pattern/quote manifest-end-line)
          "\n?$")))
 
-(declare extract-embedded-manifest)
+(declare extract-embedded-manifest
+         changed-form-indices-by-reason)
 
 (defn extract-mutation-date
   [content]
@@ -86,16 +87,32 @@
 
 (defn changed-form-indices
   [forms manifest]
+  (let [{:keys [changed-form-indices]} (changed-form-indices-by-reason forms manifest)]
+    changed-form-indices))
+
+(defn changed-form-indices-by-reason
+  [forms manifest]
   (let [current (top-level-form-manifest forms)
-        previous-by-id (into {} (map (juxt :id identity) (:forms manifest)))]
-    (->> current
-         (keep-indexed
-           (fn [idx form-entry]
-             (let [previous (get previous-by-id (:id form-entry))]
-               (when (or (nil? previous)
-                         (not= (:hash previous) (:hash form-entry)))
-                 idx))))
-         set)))
+        previous-by-id (into {} (map (juxt :id identity) (:forms manifest)))
+        new-form-indices
+        (->> current
+             (keep-indexed
+               (fn [idx form-entry]
+                 (when (nil? (get previous-by-id (:id form-entry)))
+                   idx)))
+             set)
+        manifest-violating-form-indices
+        (->> current
+             (keep-indexed
+               (fn [idx form-entry]
+                 (let [previous (get previous-by-id (:id form-entry))]
+                   (when (and previous
+                              (not= (:hash previous) (:hash form-entry)))
+                     idx))))
+             set)]
+    {:new-form-indices new-form-indices
+     :manifest-violating-form-indices manifest-violating-form-indices
+     :changed-form-indices (into new-form-indices manifest-violating-form-indices)}))
 
 (defn build-embedded-manifest
   [forms date-str]
@@ -148,5 +165,5 @@
            java.time.format.DateTimeFormatter/ISO_OFFSET_DATE_TIME))
 
 ;; clj-mutate-manifest-begin
-;; {:version 1, :tested-at "2026-03-12T09:09:42.922069-05:00", :module-hash "127438113", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line 4, :hash "-1861788327"} {:id "def/mutation-comment-re", :kind "def", :line 6, :end-line 6, :hash "739874186"} {:id "def/manifest-start-line", :kind "def", :line 7, :end-line 7, :hash "-1825565512"} {:id "def/manifest-end-line", :kind "def", :line 8, :end-line 8, :hash "744098285"} {:id "def/manifest-block-re", :kind "def", :line 9, :end-line 15, :hash "-1957750279"} {:id "form/5/declare", :kind "declare", :line 17, :end-line 17, :hash "668603200"} {:id "defn/extract-mutation-date", :kind "defn", :line 19, :end-line 24, :hash "-569806568"} {:id "defn/stamp-mutation-date", :kind "defn", :line 26, :end-line 31, :hash "-1761741461"} {:id "defn/extract-embedded-manifest", :kind "defn", :line 33, :end-line 39, :hash "-838193478"} {:id "defn/strip-embedded-manifest", :kind "defn", :line 41, :end-line 43, :hash "1175673264"} {:id "defn/strip-mutation-metadata", :kind "defn", :line 45, :end-line 49, :hash "1841423544"} {:id "defn-/form-kind", :kind "defn-", :line 51, :end-line 54, :hash "184035403"} {:id "defn-/top-level-form-id", :kind "defn-", :line 56, :end-line 69, :hash "317205413"} {:id "defn/top-level-form-manifest", :kind "defn", :line 71, :end-line 81, :hash "767610706"} {:id "defn/module-hash", :kind "defn", :line 83, :end-line 85, :hash "-1370811007"} {:id "defn/changed-form-indices", :kind "defn", :line 87, :end-line 98, :hash "-1681142834"} {:id "defn/build-embedded-manifest", :kind "defn", :line 100, :end-line 105, :hash "1204487047"} {:id "defn/embed-mutation-manifest", :kind "defn", :line 107, :end-line 121, :hash "1018794870"} {:id "defn-/backup-path", :kind "defn-", :line 123, :end-line 125, :hash "-1243914595"} {:id "defn/save-backup!", :kind "defn", :line 127, :end-line 129, :hash "1537045573"} {:id "defn/restore-from-backup!", :kind "defn", :line 131, :end-line 137, :hash "2000402189"} {:id "defn/cleanup-backup!", :kind "defn", :line 139, :end-line 143, :hash "293297155"} {:id "defn/now-str", :kind "defn", :line 145, :end-line 148, :hash "285237630"}]}
+;; {:version 1, :tested-at "2026-03-13T07:03:11.402603-05:00", :module-hash "347620054", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line 4, :hash "-1861788327"} {:id "def/mutation-comment-re", :kind "def", :line 6, :end-line 6, :hash "739874186"} {:id "def/manifest-start-line", :kind "def", :line 7, :end-line 7, :hash "-1825565512"} {:id "def/manifest-end-line", :kind "def", :line 8, :end-line 8, :hash "744098285"} {:id "def/manifest-block-re", :kind "def", :line 9, :end-line 15, :hash "-1957750279"} {:id "form/5/declare", :kind "declare", :line 17, :end-line 18, :hash "803429075"} {:id "defn/extract-mutation-date", :kind "defn", :line 20, :end-line 25, :hash "-569806568"} {:id "defn/stamp-mutation-date", :kind "defn", :line 27, :end-line 32, :hash "-1761741461"} {:id "defn/extract-embedded-manifest", :kind "defn", :line 34, :end-line 40, :hash "815988834"} {:id "defn/strip-embedded-manifest", :kind "defn", :line 42, :end-line 44, :hash "1175673264"} {:id "defn/strip-mutation-metadata", :kind "defn", :line 46, :end-line 50, :hash "1841423544"} {:id "defn-/form-kind", :kind "defn-", :line 52, :end-line 55, :hash "184035403"} {:id "defn-/top-level-form-id", :kind "defn-", :line 57, :end-line 70, :hash "317205413"} {:id "defn/top-level-form-manifest", :kind "defn", :line 72, :end-line 82, :hash "767610706"} {:id "defn/module-hash", :kind "defn", :line 84, :end-line 86, :hash "-1370811007"} {:id "defn/changed-form-indices", :kind "defn", :line 88, :end-line 91, :hash "1255192901"} {:id "defn/changed-form-indices-by-reason", :kind "defn", :line 93, :end-line 115, :hash "-30389076"} {:id "defn/build-embedded-manifest", :kind "defn", :line 117, :end-line 122, :hash "1204487047"} {:id "defn/embed-mutation-manifest", :kind "defn", :line 124, :end-line 138, :hash "-877975997"} {:id "defn-/backup-path", :kind "defn-", :line 140, :end-line 142, :hash "-1243914595"} {:id "defn/save-backup!", :kind "defn", :line 144, :end-line 146, :hash "1537045573"} {:id "defn/restore-from-backup!", :kind "defn", :line 148, :end-line 154, :hash "2000402189"} {:id "defn/cleanup-backup!", :kind "defn", :line 156, :end-line 160, :hash "293297155"} {:id "defn/now-str", :kind "defn", :line 162, :end-line 165, :hash "285237630"}]}
 ;; clj-mutate-manifest-end
