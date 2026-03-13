@@ -472,8 +472,14 @@
                       (mapv (fn [site] {:site site :result :killed :timeout? false}) sites))]
         (let [output (with-out-str
                        (core/run-mutation-testing temp-path nil 10 "clj -M:spec" nil true))]
-          (should-contain "Change surface area: 2 mutations in new top-level forms" output)
-          (should-contain "Change surface area: 2 mutations in manifest-violating top-level forms" output))
+          (should-contain "Total mutation sites: 6" output)
+          (should-contain "Covered mutation sites: 6" output)
+          (should-contain "Uncovered mutation sites: 0" output)
+          (should-contain "Changed mutation sites: 4" output)
+          (should-contain "Manifest exists: yes" output)
+          (should-contain "Module hash changed: yes" output)
+          (should-contain "Differential surface area: 2 mutations in new top-level forms" output)
+          (should-contain "Manifest-violating surface area: 2 mutations" output))
         (should (seq @captured-sites))
         (should= #{2 3} (set (map :form-index @captured-sites)))
         (should (re-find #"\d{4}-\d{2}-\d{2}T" (:tested-at (core/extract-embedded-manifest (slurp temp-path))))))
@@ -497,9 +503,15 @@
         (let [output (with-out-str
                        (core/run-mutation-testing temp-path nil 10 "clj -M:spec" nil true))]
           (should= false @called?)
+          (should-contain "Total mutation sites: 2" output)
+          (should-contain "Covered mutation sites: 2" output)
+          (should-contain "Uncovered mutation sites: 0" output)
+          (should-contain "Changed mutation sites: 0" output)
+          (should-contain "Manifest exists: yes" output)
+          (should-contain "Module hash changed: no" output)
           (should-contain "Module hash unchanged; no mutations to test." output)
-          (should-contain "Change surface area: 0 mutations in new top-level forms" output)
-          (should-contain "Change surface area: 0 mutations in manifest-violating top-level forms" output)))
+          (should-contain "Differential surface area: 0 mutations in new top-level forms" output)
+          (should-contain "Manifest-violating surface area: 0 mutations" output)))
       (.delete temp-file)))
 
   (it "defaults to differential mutation when a manifest exists"
