@@ -11,6 +11,7 @@
     "Options:\n"
     "  --scan                Report mutation counts without running tests or coverage\n"
     "  --update-manifest     Rewrite the embedded manifest without running mutations\n"
+    "  --reuse-lcov          Reuse existing LCOV data without refreshing coverage\n"
     "  --lines L1,L2,...      Run only mutations on these source lines\n"
     "  --since-last-run       Run only mutations in changed top-level forms since last successful run\n"
     "  --mutate-all           Run all covered mutations even if a manifest exists\n"
@@ -24,6 +25,7 @@
   {:source-path nil
    :scan false
    :update-manifest false
+   :reuse-lcov false
    :lines nil
    :since-last-run false
    :mutate-all false
@@ -124,6 +126,9 @@
       [rest-args (usage-error "Cannot combine --update-manifest with --scan or mutation execution options.")]
       [rest-args (assoc options :update-manifest true)])
 
+    (= "--reuse-lcov" arg)
+    [rest-args (assoc options :reuse-lcov true)]
+
     (= "--since-last-run" arg)
     (if (or (:scan options) (:update-manifest options) (:lines options) (:mutate-all options))
       [rest-args (usage-error "Cannot combine --since-last-run with --scan, --update-manifest, --lines, or --mutate-all.")]
@@ -162,5 +167,5 @@
             (recur remaining updated-options)))))))
 
 ;; clj-mutate-manifest-begin
-;; {:version 1, :tested-at "2026-03-12T10:35:14.944742-05:00", :module-hash "1467604435", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line 3, :hash "1659780056"} {:id "def/default-test-command", :kind "def", :line 5, :end-line 5, :hash "-1188861817"} {:id "def/usage-summary", :kind "def", :line 7, :end-line 21, :hash "-117038009"} {:id "def/default-options", :kind "def", :line 23, :end-line 33, :hash "-187288951"} {:id "defn-/parse-lines", :kind "defn-", :line 35, :end-line 38, :hash "-1934187243"} {:id "defn-/usage-error", :kind "defn-", :line 40, :end-line 42, :hash "1974487799"} {:id "defn-/ensure-source-path", :kind "defn-", :line 44, :end-line 50, :hash "-1213637125"} {:id "defn-/parse-positive-int-option", :kind "defn-", :line 52, :end-line 57, :hash "-1335572082"} {:id "defn-/assoc-valid-option", :kind "defn-", :line 59, :end-line 63, :hash "-799587466"} {:id "defn-/parse-lines-option", :kind "defn-", :line 65, :end-line 72, :hash "-1155732671"} {:id "defn-/parse-timeout-factor-option", :kind "defn-", :line 74, :end-line 78, :hash "-535890960"} {:id "defn-/parse-test-command-option", :kind "defn-", :line 80, :end-line 85, :hash "-1514324896"} {:id "defn-/parse-max-workers-option", :kind "defn-", :line 87, :end-line 91, :hash "2102075008"} {:id "defn-/parse-mutation-warning-option", :kind "defn-", :line 93, :end-line 95, :hash "1462324008"} {:id "def/option-updaters", :kind "def", :line 97, :end-line 102, :hash "-477315895"} {:id "defn-/update-arg-option", :kind "defn-", :line 104, :end-line 106, :hash "744944125"} {:id "defn-/consume-option", :kind "defn-", :line 108, :end-line 149, :hash "1685472801"} {:id "defn/validate-args", :kind "defn", :line 151, :end-line 162, :hash "-118263957"}]}
+;; {:version 1, :tested-at "2026-03-14T08:11:30.2678-05:00", :module-hash "-369639701", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line 3, :hash "1659780056"} {:id "def/default-test-command", :kind "def", :line 5, :end-line 5, :hash "-1188861817"} {:id "def/usage-summary", :kind "def", :line 7, :end-line 22, :hash "1058706533"} {:id "def/default-options", :kind "def", :line 24, :end-line 35, :hash "-465033091"} {:id "defn-/parse-lines", :kind "defn-", :line 37, :end-line 40, :hash "-297381036"} {:id "defn-/usage-error", :kind "defn-", :line 42, :end-line 44, :hash "1974487799"} {:id "defn-/ensure-source-path", :kind "defn-", :line 46, :end-line 52, :hash "-1213637125"} {:id "defn-/parse-positive-int-option", :kind "defn-", :line 54, :end-line 59, :hash "-1335572082"} {:id "defn-/assoc-valid-option", :kind "defn-", :line 61, :end-line 65, :hash "-799587466"} {:id "defn-/parse-lines-option", :kind "defn-", :line 67, :end-line 74, :hash "-1155732671"} {:id "defn-/parse-timeout-factor-option", :kind "defn-", :line 76, :end-line 80, :hash "-535890960"} {:id "defn-/parse-test-command-option", :kind "defn-", :line 82, :end-line 87, :hash "-1514324896"} {:id "defn-/parse-max-workers-option", :kind "defn-", :line 89, :end-line 93, :hash "2102075008"} {:id "defn-/parse-mutation-warning-option", :kind "defn-", :line 95, :end-line 97, :hash "1462324008"} {:id "def/option-updaters", :kind "def", :line 99, :end-line 104, :hash "-477315895"} {:id "defn-/update-arg-option", :kind "defn-", :line 106, :end-line 108, :hash "744944125"} {:id "defn-/consume-option", :kind "defn-", :line 110, :end-line 154, :hash "669926157"} {:id "defn/validate-args", :kind "defn", :line 156, :end-line 167, :hash "-118263957"}]}
 ;; clj-mutate-manifest-end

@@ -37,6 +37,9 @@ clj -M:mutate src/myapp/foo.cljc --since-last-run
 # Override the default differential behavior and mutate all covered sites
 clj -M:mutate src/myapp/foo.cljc --mutate-all
 
+# Reuse existing LCOV data without refreshing coverage
+clj -M:mutate src/myapp/foo.cljc --reuse-lcov
+
 # Warn when a module exceeds a mutation-count threshold
 clj -M:mutate src/myapp/foo.cljc --mutation-warning 75
 
@@ -62,6 +65,7 @@ The tool automatically:
 - Defaults to differential mutation when that footer manifest is already present
 - Prints a warning when mutation count exceeds `--mutation-warning` (default `50`)
 - Excludes specs tagged `:no-mutate` by default so mutation workers do not recursively launch nested mutation runs
+- Can reuse existing LCOV data with `--reuse-lcov`
 
 `--scan` is the fast structural mode. It skips coverage, skips test execution, and reports:
 - total mutation sites
@@ -101,6 +105,7 @@ Workflow rules:
 - Before moving to the next file, cover every uncovered mutation in the current file.
 - Before moving to the next file, kill every surviving mutation in the current file.
 - `clj-mutate` uses LCOV coverage data and regenerates it when stale or missing.
+- In a batch of mutation runs, let the first run generate coverage, then consider `--reuse-lcov` for the remaining files if you accept stale-coverage risk.
 
 Recommended loop for each file:
 1. Run `clj -M:mutate path/to/file.clj --max-workers 3`.
@@ -162,6 +167,13 @@ Coverage freshness is checked automatically:
 - If `target/coverage/lcov.info` is missing, `clj-mutate` regenerates it with `clj -M:cov --lcov`.
 - If LCOV is older than current source/spec inputs, `clj-mutate` regenerates it with `clj -M:cov --lcov`.
 - The run prints a diagnostic message when regeneration is triggered.
+
+With `--reuse-lcov`:
+- `clj-mutate` uses the existing `target/coverage/lcov.info` as-is
+- stale coverage is allowed
+- the run prints a warning that covered/uncovered classification may be inaccurate
+- the run prints whether the LCOV file exists, its last modified time when present, and whether the target source is newer than the LCOV file
+- if `target/coverage/lcov.info` is missing, the run prints a clear error and exits with status `1`
 
 ```clojure
 :cov {:main-opts ["-m" "speclj.cloverage" "--" "-p" "src" "-s" "spec" "--lcov"]

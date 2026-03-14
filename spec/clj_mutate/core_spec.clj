@@ -145,6 +145,13 @@
         (should= true (:update-manifest result))
         (.delete temp))))
 
+  (it "parses --reuse-lcov"
+    (let [temp (java.io.File/createTempFile "src" ".cljc")]
+      (spit temp "(ns test-ns)")
+      (let [result (core/validate-args [(.getPath temp) "--reuse-lcov"])]
+        (should= true (:reuse-lcov result))
+        (.delete temp))))
+
   (it "parses --mutation-warning"
     (let [temp (java.io.File/createTempFile "src" ".cljc")]
       (spit temp "(ns test-ns)")
@@ -408,7 +415,7 @@
                     runner/run-specs-timed (fn [cmd]
                                              (should= "clj -M:spec --tag ~no-mutate" cmd)
                                              {:result :survived :elapsed-ms 100})
-                    coverage/load-coverage (fn [_] nil)
+                    coverage/load-coverage (fn [& _] nil)
                     core/run-mutations-parallel
                     (fn [sites source-path content timeout-ms max-workers test-command]
                       (should= nil max-workers)
@@ -439,7 +446,7 @@
                     runner/run-specs-timed (fn [cmd]
                                              (should= "clj -M:spec --tag ~no-mutate" cmd)
                                              {:result :survived :elapsed-ms 100})
-                    coverage/load-coverage (fn [_] nil)
+                    coverage/load-coverage (fn [& _] nil)
                     core/run-mutations-parallel
                     (fn [sites source-path content timeout-ms max-workers test-command]
                       (should= nil max-workers)
@@ -465,19 +472,44 @@
       (spit temp-path (core/embed-mutation-manifest updated prior-manifest))
       (with-redefs [runner/run-specs (fn [& _] :killed)
                     runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
-                    coverage/load-coverage (fn [_] nil)
+                    coverage/load-coverage (fn [& _] nil)
+                    core/mutation-run-context
+                    (fn [_ _ _]
+                      {:prev-date "2026-02-20T08:00:00-06:00"
+                       :prior-manifest prior-manifest
+                       :analysis-content updated
+                       :all-sites (core/discover-all-mutations (core/read-source-forms updated))
+                       :covered-sites (core/discover-all-mutations (core/read-source-forms updated))
+                       :uncovered []
+                       :module-unchanged? false
+                       :changed-forms #{2 3}
+                       :manifest-content (core/embed-mutation-manifest updated prior-manifest)
+                       :manifest-exists? true
+                       :module-hash-changed? true
+                       :changed-mutation-sites 4
+                       :surface-area-counts {:new-form-mutations 2
+                                             :manifest-violating-form-mutations 2}
+                       :coverage-status {:lcov-path "target/coverage/lcov.info"
+                                         :exists? true
+                                         :last-modified 123
+                                         :source-newer? true}})
                     core/run-mutations-parallel
                     (fn [sites _ _ _ _ _]
                       (reset! captured-sites sites)
                       (mapv (fn [site] {:site site :result :killed :timeout? false}) sites))]
         (let [output (with-out-str
-                       (core/run-mutation-testing temp-path nil 10 "clj -M:spec" nil true))]
+                       (core/run-mutation-testing temp-path nil 10 "clj -M:spec" nil true false 50 true))]
           (should-contain "Total mutation sites: 6" output)
           (should-contain "Covered mutation sites: 6" output)
           (should-contain "Uncovered mutation sites: 0" output)
           (should-contain "Changed mutation sites: 4" output)
           (should-contain "Manifest exists: yes" output)
           (should-contain "Module hash changed: yes" output)
+          (should-contain "Reusing existing LCOV data from target/coverage/lcov.info." output)
+          (should-contain "Warning: coverage may be stale; covered/uncovered site classification may be inaccurate." output)
+          (should-contain "LCOV exists: yes" output)
+          (should-contain "LCOV last modified: 123" output)
+          (should-contain "Target source newer than LCOV: yes" output)
           (should-contain "Differential surface area: 2 mutations in new top-level forms" output)
           (should-contain "Manifest-violating surface area: 2 mutations" output))
         (should (seq @captured-sites))
@@ -495,7 +527,7 @@
       (spit temp-path source-with-manifest)
       (with-redefs [runner/run-specs (fn [& _] :killed)
                     runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
-                    coverage/load-coverage (fn [_] nil)
+                    coverage/load-coverage (fn [& _] nil)
                     core/run-mutations-parallel
                     (fn [& _]
                       (reset! called? true)
@@ -524,7 +556,7 @@
       (spit temp-path (core/embed-mutation-manifest updated prior-manifest))
       (with-redefs [runner/run-specs (fn [& _] :killed)
                     runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
-                    coverage/load-coverage (fn [_] nil)
+                    coverage/load-coverage (fn [& _] nil)
                     core/run-mutations-parallel
                     (fn [sites _ _ _ _ _]
                       (reset! captured-sites sites)
@@ -544,7 +576,7 @@
       (spit temp-path (core/embed-mutation-manifest source prior-manifest))
       (with-redefs [runner/run-specs (fn [& _] :killed)
                     runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
-                    coverage/load-coverage (fn [_] nil)
+                    coverage/load-coverage (fn [& _] nil)
                     core/run-mutations-parallel
                     (fn [sites _ _ _ _ _]
                       (reset! captured-sites sites)
@@ -562,7 +594,7 @@
       (spit temp-path source)
       (with-redefs [runner/run-specs (fn [& _] :killed)
                     runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
-                    coverage/load-coverage (fn [_] nil)
+                    coverage/load-coverage (fn [& _] nil)
                     core/run-mutations-parallel
                     (fn [sites _ _ _ _ _]
                       (mapv (fn [site] {:site site :result :killed :timeout? false}) sites))]
@@ -583,7 +615,7 @@
                     runner/run-specs-timed (fn [cmd]
                                              (reset! captured-command cmd)
                                              {:result :survived :elapsed-ms 200})
-                    coverage/load-coverage (fn [_] nil)
+                    coverage/load-coverage (fn [& _] nil)
                     core/run-mutations-parallel
                     (fn [sites _ _ timeout-ms _ test-command]
                       (reset! captured-timeout timeout-ms)
@@ -609,7 +641,7 @@
       (with-redefs [core/restore-from-backup! (fn [_] false)
                     core/extract-embedded-manifest (fn [_] nil)
                     core/mutation-run-context
-                    (fn [_ _]
+                    (fn [_ _ _]
                       {:prev-date nil
                        :prior-manifest nil
                        :analysis-content "(ns test-ns)\n"
@@ -618,7 +650,16 @@
                        :uncovered []
                        :module-unchanged? false
                        :changed-forms #{}
-                       :manifest-content "(ns test-ns)\n"})
+                       :manifest-content "(ns test-ns)\n"
+                       :manifest-exists? false
+                       :module-hash-changed? nil
+                       :changed-mutation-sites 0
+                       :surface-area-counts {:new-form-mutations 0
+                                             :manifest-violating-form-mutations 0}
+                       :coverage-status {:lcov-path "target/coverage/lcov.info"
+                                         :exists? false
+                                         :last-modified nil
+                                         :source-newer? false}})
                     core/select-mutation-sites (fn [& _] [])
                     core/print-run-header (fn [& _] nil)
                     core/with-baseline (fn [test-command timeout-factor on-pass]
@@ -720,7 +761,7 @@
   (it "dispatches to run-mutation-testing for valid input"
     (let [received (atom nil)]
       (with-redefs [core/run-mutation-testing
-                    (fn [source-path lines timeout-factor test-command max-workers since-last-run mutate-all mutation-warning]
+                    (fn [source-path lines timeout-factor test-command max-workers since-last-run mutate-all mutation-warning reuse-lcov]
                       (reset! received {:source-path source-path
                                         :lines lines
                                         :timeout-factor timeout-factor
@@ -728,7 +769,8 @@
                                         :max-workers max-workers
                                         :since-last-run since-last-run
                                         :mutate-all mutate-all
-                                        :mutation-warning mutation-warning}))]
+                                        :mutation-warning mutation-warning
+                                        :reuse-lcov reuse-lcov}))]
         (#'core/handle-main-result {:source-path "src/foo.cljc"
                                     :lines #{3}
                                     :timeout-factor 7
@@ -736,7 +778,8 @@
                                     :max-workers 2
                                     :since-last-run true
                                     :mutate-all false
-                                    :mutation-warning 75})
+                                    :mutation-warning 75
+                                    :reuse-lcov true})
         (should= {:source-path "src/foo.cljc"
                   :lines #{3}
                   :timeout-factor 7
@@ -744,8 +787,31 @@
                   :max-workers 2
                   :since-last-run true
                   :mutate-all false
-                  :mutation-warning 75}
-                 @received)))))
+                  :mutation-warning 75
+                  :reuse-lcov true}
+                 @received))))
+
+  (it "prints a helpful error and exits when reuse-lcov is requested without an lcov file"
+    (let [status (atom nil)
+          output (with-out-str
+                   (with-redefs [core/run-mutation-testing
+                                 (fn [& _]
+                                   (throw (ex-info "missing lcov"
+                                                   {:reason :missing-lcov-for-reuse
+                                                    :lcov-path "target/coverage/lcov.info"})))
+                                 core/exit! (fn [s] (reset! status s))]
+                     (#'core/handle-main-result {:source-path "src/foo.cljc"
+                                                 :lines nil
+                                                 :timeout-factor 10
+                                                 :test-command "clj -M:spec"
+                                                 :max-workers nil
+                                                 :since-last-run false
+                                                 :mutate-all false
+                                                 :mutation-warning 50
+                                                 :reuse-lcov true})))]
+      (should= 1 @status)
+      (should-contain "Error: --reuse-lcov was requested, but target/coverage/lcov.info does not exist." output)
+      (should-contain "Run without --reuse-lcov once to generate coverage." output))))
 
 (describe "-main"
   (it "shuts down agents after successful command handling"
@@ -779,7 +845,7 @@
                     runner/run-specs-timed (fn [cmd]
                                              (should= "clj -M:spec --tag ~no-mutate" cmd)
                                              {:result :survived :elapsed-ms 100})
-                    coverage/load-coverage (fn [_] nil)
+                    coverage/load-coverage (fn [& _] nil)
                     core/run-mutations-parallel
                     (fn [sites source-path content timeout-ms max-workers test-command]
                       (should= nil max-workers)

@@ -10,6 +10,7 @@
 - Optional CLI arguments:
   - `--scan`
   - `--update-manifest`
+  - `--reuse-lcov`
   - `--lines L1,L2,...`
   - `--since-last-run`
   - `--mutate-all`
@@ -41,6 +42,7 @@
 
 - `--scan` reports mutation counts only and does not execute mutation testing.
 - `--update-manifest` rewrites the embedded manifest for the current file contents without executing mutation testing.
+- `--reuse-lcov` reuses existing LCOV coverage data without refreshing it.
 - `--lines` restricts execution to covered mutation sites on the specified source lines.
 - `--since-last-run` restricts execution to covered mutation sites in changed top-level forms relative to the embedded manifest.
 - `--mutate-all` forces execution of all covered mutation sites, even when a manifest exists.
@@ -83,6 +85,9 @@
 
 - If coverage data is unavailable, all mutation sites are treated as covered.
 - If `lcov.info` is missing or stale, the tool attempts to regenerate it with `clj -M:cov --lcov`.
+- When `--reuse-lcov` is set, the tool does not regenerate `lcov.info`.
+- If `--reuse-lcov` is set and `lcov.info` is missing, the tool prints a clear error and exits with status `1`.
+- In a batch of mutation runs, one run may refresh coverage and subsequent runs may reuse the same LCOV file with `--reuse-lcov`.
 - Mutations on uncovered lines are skipped.
 
 ## Execution Behavior
@@ -110,6 +115,7 @@
   - source path
   - previous mutation timestamp when available
   - before baseline and worker execution, total/covered/uncovered/changed mutation counts plus manifest and differential-surface metrics
+  - when `--reuse-lcov` is active, an explicit warning plus LCOV existence and freshness diagnostics
   - per-mutant progress
   - summary with killed/survived counts
 - When total discovered mutations exceed `--mutation-warning`, the tool prints:

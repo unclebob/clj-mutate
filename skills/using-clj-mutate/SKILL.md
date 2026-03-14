@@ -52,6 +52,9 @@ clj -M:mutate src/myapp/foo.cljc --since-last-run
 
 # Override differential mode and run all covered mutations
 clj -M:mutate src/myapp/foo.cljc --mutate-all
+
+# Reuse existing LCOV data without refreshing coverage
+clj -M:mutate src/myapp/foo.cljc --reuse-lcov
 ```
 
 The tool automatically:
@@ -61,11 +64,14 @@ The tool automatically:
 - Writes an embedded footer manifest with `:tested-at` and top-level form hashes on successful runs
 - Defaults to differential mutation when that footer manifest already exists
 - Runs coverage if `lcov.info` is missing or stale
+- Can reuse existing LCOV data with `--reuse-lcov`
 - Excludes specs tagged `:no-mutate` by default to avoid nested mutation runs inside mutation workers
 
 Use `--scan` when you want a fast module-size signal without paying for coverage or test execution. It reports total mutation sites, changed mutation sites, and the usual warning threshold output.
 
 Use `--update-manifest` when you want to accept the current file contents as the new differential baseline without paying for coverage or mutation execution.
+
+Use `--reuse-lcov` when coverage has already been generated and you want to skip an expensive LCOV refresh. The run will warn that covered/uncovered classification may be stale. If `target/coverage/lcov.info` is missing, the run prints a clear error and exits.
 
 ## Mutation Rules
 
@@ -103,6 +109,8 @@ Known-equivalent mutations are auto-suppressed to reduce false survivors:
 4. Write specs to kill survivors
 5. Retest survivors: `clj -M:mutate src/myapp/foo.cljc --lines 45,67`
 6. Repeat until kill rate is satisfactory
+
+For a batch of files, the first mutation run can generate coverage and later runs can use `--reuse-lcov` to avoid repeating LCOV refresh, if you accept the stale-coverage tradeoff.
 
 For incremental work on an already-mutated file, the default run is already differential. You can still be explicit:
 

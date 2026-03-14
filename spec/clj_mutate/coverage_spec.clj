@@ -83,6 +83,27 @@
           (should @ran?)
           (should= #{1 3 5} result)))))
 
+  (it "reuses stale lcov when requested"
+    (let [ran? (atom false)
+          temp-lcov (str "/tmp/test-lcov-stale-" (System/nanoTime) ".info")]
+      (spit temp-lcov sample-lcov)
+      (with-redefs [cov/run-coverage! (fn [] (reset! ran? true) true)
+                    cov/lcov-path (constantly temp-lcov)
+                    cov/stale-reason (fn [_ _] :stale)]
+        (let [result (cov/load-coverage "src/empire/combat.cljc" {:reuse-lcov true})]
+          (should= false @ran?)
+          (should= #{1 3 5} result)))
+      (java.nio.file.Files/deleteIfExists
+        (.toPath (java.io.File. temp-lcov)))))
+
+  (it "fails clearly when reuse-lcov is requested and lcov is missing"
+    (let [temp-lcov (str "/tmp/missing-reuse-lcov-" (System/nanoTime) ".info")]
+      (with-redefs [cov/run-coverage! (fn [] (throw (Exception. "should not run")))
+                    cov/lcov-path (constantly temp-lcov)
+                    cov/stale-reason (fn [_ _] :missing)]
+        (should-throw clojure.lang.ExceptionInfo
+                      (cov/load-coverage "src/empire/combat.cljc" {:reuse-lcov true})))))
+
   (it "returns nil when lcov.info does not exist and coverage fails"
     (let [temp-lcov (str "/tmp/nonexistent-lcov-" (System/nanoTime) ".info")]
       (with-redefs [cov/run-coverage! (fn [] false)
@@ -91,6 +112,19 @@
           (.toPath (java.io.File. temp-lcov)))
         (should-be-nil (cov/load-coverage "src/empire/combat.cljc")))))
   )
+
+(describe "coverage-status"
+  (it "reports lcov presence and freshness diagnostics"
+    (let [temp (java.io.File/createTempFile "lcov-status" ".info")]
+      (.setLastModified temp 123)
+      (with-redefs [cov/lcov-path (constantly (.getPath temp))
+                    cov/newest-input-mtime (fn [_] 200)]
+        (let [status (cov/coverage-status "src/empire/combat.cljc")]
+          (should= true (:exists? status))
+          (should= 123 (:last-modified status))
+          (should= true (:source-newer? status))
+          (should= :stale (:stale-reason status))))
+      (.delete temp))))
 
 (describe "stale-reason"
   (it "returns :missing when lcov file does not exist"
