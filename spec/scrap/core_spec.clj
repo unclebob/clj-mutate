@@ -54,7 +54,30 @@
                    "spec/bad_spec.clj")]
       (should (seq (:structure-errors report)))
       (should (string? (:parse-error report)))
-      (should= [] (:examples report)))))
+      (should= [] (:examples report))))
+
+  (it "derives fuzzy duplication metrics from repeated setup and arrange structure"
+    (let [report (scrap/analyze-source
+                   (str "(describe \"duplication\"\n"
+                        "  (before (let [db {:port 5432 :host \"a\" :pool 4}] db))\n"
+                        "  (it \"first\"\n"
+                        "    (let [user {:id 1 :name \"alice\" :role :admin :team :blue :tier 1 :age 30 :city \"x\" :region \"y\" :active true :quota 9 :rank 2}]\n"
+                        "      (service/run user))\n"
+                        "    (should= :ok result))\n"
+                        "  (it \"second\"\n"
+                        "    (let [account {:id 2 :name \"bob\" :role :admin :team :blue :tier 2 :age 31 :city \"m\" :region \"n\" :active true :quota 8 :rank 3}]\n"
+                        "      (service/run account))\n"
+                        "    (should= :ok result)))\n")
+                   "spec/duplication_spec.clj")
+          summary (:summary report)]
+      (should= 2 (:example-count summary))
+      (should= 2 (:repeated-setup-examples summary))
+      (should= 2 (:repeated-fixture-examples summary))
+      (should= 2 (:repeated-literal-examples summary))
+      (should= 2 (:repeated-arrange-examples summary))
+      (should (< 0.0 (:avg-setup-similarity summary)))
+      (should (< 0.0 (:avg-arrange-similarity summary)))
+      (should (< 0.0 (:duplication-score summary))))))
 
 (describe "collect-spec-files"
   (it "collects spec files from a directory tree"

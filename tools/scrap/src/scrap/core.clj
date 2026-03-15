@@ -1,6 +1,7 @@
 (ns scrap.core
   (:require [clj-mutate.source :as source]
             [clojure.java.io :as io]
+            [clojure.set :as set]
             [clojure.string :as str]))
 
 (def assertion-heads
@@ -106,12 +107,91 @@
                    (second form)))))
        set))
 
+(declare normalize-shape)
+
+(defn- normalized-map-shape
+  [m]
+  (into (sorted-map)
+        (for [[k v] m]
+          [(normalize-shape k) (normalize-shape v)])))
+
+(defn- normalize-shape
+  [expr]
+  (cond
+    (seq? expr) (apply list (map normalize-shape expr))
+    (vector? expr) (mapv normalize-shape expr)
+    (map? expr) (normalized-map-shape expr)
+    (set? expr) (into #{} (map normalize-shape expr))
+    (symbol? expr) 'sym
+    (keyword? expr) expr
+    (string? expr) :string
+    (number? expr) :number
+    (char? expr) :char
+    (boolean? expr) :boolean
+    (nil? expr) nil
+    :else (type expr)))
+
+(defn- shape-signature
+  [expr]
+  (pr-str (normalize-shape expr)))
+
+(defn- shape-features
+  [expr]
+  (let [normalized (normalize-shape expr)
+        children (cond
+                   (seq? normalized) (seq normalized)
+                   (map? normalized) (concat (keys normalized) (vals normalized))
+                   (coll? normalized) (seq normalized)
+                   :else nil)]
+    (conj (set (mapcat shape-features children))
+          (pr-str normalized))))
+
+(defn- collect-large-literal-signatures
+  [expr]
+  (let [children (cond
+                   (seq? expr) (seq expr)
+                   (map? expr) (concat (keys expr) (vals expr))
+                   (coll? expr) (seq expr)
+                   :else nil)
+        local (when (large-literal? expr)
+                [(shape-signature expr)])]
+    (vec (concat local (mapcat collect-large-literal-signatures children)))))
+
+(defn- form-signatures
+  [forms]
+  (mapv shape-signature forms))
+
+(defn- form-features
+  [forms]
+  (apply set/union #{} (map shape-features forms)))
+
+(defn- setup-forms
+  [forms]
+  (filterv #(contains? setup-heads (seq-head %)) forms))
+
+(defn- arrange-forms
+  [forms helper-set]
+  (filterv #(not= :assert (top-level-phase % helper-set)) forms))
+
 (defn- score-example
-  [it-form helper-set inherited-setup describe-path]
+  [it-form helper-set inherited-setup-forms describe-path]
   (let [[_ name & body] it-form
+        inherited-setup (count inherited-setup-forms)
         metrics (apply combine-metrics (map #(analyze-node % helper-set inherited-setup) body))
         line-count (max 1 (inc (- (or (-> it-form meta :end-line) (-> it-form meta :line) 1)
                                   (or (-> it-form meta :line) 1))))
+        local-setup (setup-forms body)
+        effective-setup (vec (concat inherited-setup-forms local-setup))
+        setup-signatures (form-signatures effective-setup)
+        setup-features (form-features effective-setup)
+        arrange-signatures (form-signatures (arrange-forms body helper-set))
+        arrange-features (form-features (arrange-forms body helper-set))
+        literal-signatures (vec (mapcat collect-large-literal-signatures body))
+        literal-features (set literal-signatures)
+        fixture-shape (when (seq setup-signatures) (shape-signature setup-signatures))
+        fixture-features (if (seq setup-signatures)
+                           (shape-features setup-signatures)
+                           #{})
         phases (assertion-clusters body helper-set)
         complexity (+ 1
                       (:branches metrics)
@@ -150,29 +230,93 @@
      :with-redefs (:with-redefs metrics)
      :helper-calls (:helper-calls metrics)
      :temp-resources (:temp-resources metrics)
+     :setup-signatures setup-signatures
+     :setup-features setup-features
+     :fixture-shape fixture-shape
+     :fixture-features fixture-features
+     :arrange-signatures arrange-signatures
+     :arrange-features arrange-features
+     :literal-signatures literal-signatures
+     :literal-features literal-features
      :scrap scrap
      :smells (mapv :label smell-entries)}))
 
-(defn- local-setup-count
-  [forms]
-  (count (filter #(contains? setup-heads (seq-head %)) forms)))
-
 (defn- collect-examples
-  [forms helper-set describe-path inherited-setup]
-  (mapcat
-    (fn [form]
-      (let [head (seq-head form)]
-        (cond
-          (#{'describe 'context} head)
-          (let [[_ name & body] form
-                setup (+ inherited-setup (local-setup-count body))]
-            (collect-examples body helper-set (conj describe-path name) setup))
+  [forms helper-set describe-path inherited-setup-forms]
+  (let [local-setup (setup-forms forms)
+        effective-setup (vec (concat inherited-setup-forms local-setup))]
+    (mapcat
+      (fn [form]
+        (let [head (seq-head form)]
+          (cond
+            (#{'describe 'context} head)
+            (let [[_ name & body] form]
+              (collect-examples body helper-set (conj describe-path name) effective-setup))
 
-          (= 'it head)
-          [(score-example form helper-set inherited-setup describe-path)]
+            (= 'it head)
+            [(score-example form helper-set effective-setup describe-path)]
 
-          :else [])))
-    forms))
+            :else [])))
+      forms)))
+
+(defn- jaccard-similarity
+  [a b]
+  (let [a (or a #{})
+        b (or b #{})
+        union-size (count (set/union a b))]
+    (if (zero? union-size)
+      0.0
+      (/ (count (set/intersection a b))
+         union-size))))
+
+(def duplication-threshold 0.5)
+
+(defn- similar-example-count
+  [examples key-fn]
+  (count
+    (filter
+      (fn [example]
+        (let [features (key-fn example)]
+          (and (seq features)
+               (some #(>= (jaccard-similarity features (key-fn %)) duplication-threshold)
+                     (remove #{example} examples)))))
+      examples)))
+
+(defn- average-similarity
+  [examples key-fn]
+  (let [pairs (for [left examples
+                    right examples
+                    :when (< (.indexOf examples left) (.indexOf examples right))]
+                (jaccard-similarity (key-fn left) (key-fn right)))]
+    (if (seq pairs)
+      (/ (reduce + pairs) (count pairs))
+      0.0)))
+
+(defn- distinct-shape-count
+  [examples key-fn]
+  (count (distinct (remove nil? (mapcat key-fn examples)))))
+
+(defn- summarize-duplication
+  [examples]
+  (let [repeated-setup-examples (similar-example-count examples :setup-features)
+        repeated-fixture-examples (similar-example-count examples :fixture-features)
+        repeated-literal-examples (similar-example-count examples :literal-features)
+        repeated-arrange-examples (similar-example-count examples :arrange-features)]
+    {:repeated-setup-examples repeated-setup-examples
+     :repeated-fixture-examples repeated-fixture-examples
+     :repeated-literal-examples repeated-literal-examples
+     :repeated-arrange-examples repeated-arrange-examples
+     :setup-shape-diversity (distinct-shape-count examples :setup-signatures)
+     :literal-shape-diversity (distinct-shape-count examples :literal-signatures)
+     :arrange-shape-diversity (distinct-shape-count examples :arrange-signatures)
+     :avg-setup-similarity (average-similarity examples :setup-features)
+     :avg-fixture-similarity (average-similarity examples :fixture-features)
+     :avg-literal-similarity (average-similarity examples :literal-features)
+     :avg-arrange-similarity (average-similarity examples :arrange-features)
+     :duplication-score (+ repeated-setup-examples
+                           repeated-fixture-examples
+                           repeated-literal-examples
+                           repeated-arrange-examples)}))
 
 (defn- process-char [state c next-c]
   (let [{:keys [mode depth line escape skip]} state]
@@ -288,21 +432,24 @@
        :parse-error (:parse-error forms)
        :examples []}
       (let [helpers (helper-symbols forms)
-            examples (vec (collect-examples forms helpers [] 0))
+            examples (vec (collect-examples forms helpers [] []))
             total (count examples)
             avg-scrap (if (pos? total)
                         (/ (reduce + (map :scrap examples)) total)
-                        0.0)]
+                        0.0)
+            duplication (summarize-duplication examples)]
         {:path path
          :structure-errors structure-errors
          :parse-error nil
          :examples examples
-         :summary {:example-count total
-                   :avg-scrap avg-scrap
-                   :max-scrap (if (seq examples) (apply max (map :scrap examples)) 0)
-                   :branching-examples (count (filter #(pos? (:branches %)) examples))
-                   :low-assertion-examples (count (filter #(<= (:assertions %) 1) examples))
-                   :with-redefs-examples (count (filter #(pos? (:with-redefs %)) examples))}}))))
+         :summary (merge
+                    {:example-count total
+                     :avg-scrap avg-scrap
+                     :max-scrap (if (seq examples) (apply max (map :scrap examples)) 0)
+                     :branching-examples (count (filter #(pos? (:branches %)) examples))
+                     :low-assertion-examples (count (filter #(<= (:assertions %) 1) examples))
+                     :with-redefs-examples (count (filter #(pos? (:with-redefs %)) examples))}
+                    duplication)}))))
 
 (defn analyze-file
   [path]
@@ -344,11 +491,23 @@
     (when parse-error
       (str "  parse-error: " parse-error "\n"))
     (when summary
-      (str "  avg-scrap: " (format "%.1f" (double (:avg-scrap summary))) "\n"
+      (str "  avg-scrap: " (format "%.1f" (double (or (:avg-scrap summary) 0.0))) "\n"
            "  max-scrap: " (:max-scrap summary) "\n"
            "  branching-examples: " (:branching-examples summary) "/" (:example-count summary) "\n"
            "  low-assertion-examples: " (:low-assertion-examples summary) "/" (:example-count summary) "\n"
            "  with-redefs-examples: " (:with-redefs-examples summary) "/" (:example-count summary) "\n"
+           "  duplication-score: " (or (:duplication-score summary) 0) "\n"
+           "  repeated-setup-examples: " (or (:repeated-setup-examples summary) 0) "/" (:example-count summary) "\n"
+           "  repeated-fixture-examples: " (or (:repeated-fixture-examples summary) 0) "/" (:example-count summary) "\n"
+           "  repeated-literal-examples: " (or (:repeated-literal-examples summary) 0) "/" (:example-count summary) "\n"
+           "  repeated-arrange-examples: " (or (:repeated-arrange-examples summary) 0) "/" (:example-count summary) "\n"
+           "  setup-shape-diversity: " (or (:setup-shape-diversity summary) 0) "\n"
+           "  literal-shape-diversity: " (or (:literal-shape-diversity summary) 0) "\n"
+           "  arrange-shape-diversity: " (or (:arrange-shape-diversity summary) 0) "\n"
+           "  avg-setup-similarity: " (format "%.2f" (double (or (:avg-setup-similarity summary) 0.0))) "\n"
+           "  avg-fixture-similarity: " (format "%.2f" (double (or (:avg-fixture-similarity summary) 0.0))) "\n"
+           "  avg-literal-similarity: " (format "%.2f" (double (or (:avg-literal-similarity summary) 0.0))) "\n"
+           "  avg-arrange-similarity: " (format "%.2f" (double (or (:avg-arrange-similarity summary) 0.0))) "\n"
            (when (seq examples)
              (let [top-example (first (sort-by :scrap > examples))]
                (str "  worst-example: "
