@@ -74,25 +74,19 @@
         (should (some #(and (= (:original %) original) (= (:mutant %) mutant)) sites))))))
 
 (describe "rand-nth literal pool suppression"
-  (it "suppresses 0 inside (rand-nth [0 1])"
-    (let [sites (m/find-mutations '(rand-nth [0 1]))]
-      (should-not (some #(and (= (:original %) 0) (= (:mutant %) 1)) sites))))
+  (it "suppresses literal-pool mutations inside rand-nth"
+    (doseq [[form original mutant]
+            [['(rand-nth [0 1]) 0 1]
+             ['(rand-nth [0 1]) 1 0]
+             ['(rand-nth [[-1 0] [1 0]]) 0 1]]]
+      (let [sites (m/find-mutations form)]
+        (should-not (some #(and (= (:original %) original) (= (:mutant %) mutant)) sites)))))
 
-  (it "suppresses 1 inside (rand-nth [0 1])"
-    (let [sites (m/find-mutations '(rand-nth [0 1]))]
-      (should-not (some #(and (= (:original %) 1) (= (:mutant %) 0)) sites))))
-
-  (it "suppresses 0 inside nested (rand-nth [[-1 0] [1 0]])"
-    (let [sites (m/find-mutations '(rand-nth [[-1 0] [1 0]]))]
-      (should-not (some #(and (= (:original %) 0) (= (:mutant %) 1)) sites))))
-
-  (it "does not suppress 0 in normal code"
-    (let [sites (m/find-mutations '(+ x 0))]
-      (should (some #(and (= (:original %) 0) (= (:mutant %) 1)) sites))))
-
-  (it "does not suppress 0 in let binding vectors"
-    (let [sites (m/find-mutations '(let [x 0] (+ x 1)))]
-      (should (some #(and (= (:original %) 0) (= (:mutant %) 1)) sites)))))
+  (it "does not suppress literal-pool mutations outside rand-nth"
+    (doseq [form ['(+ x 0)
+                  '(let [x 0] (+ x 1))]]
+      (let [sites (m/find-mutations form)]
+        (should (some #(and (= (:original %) 0) (= (:mutant %) 1)) sites))))))
 
 (describe "subvec trim boundary suppression"
   (it "suppresses > -> >= inside (if (> (count v) 10) (subvec ...))"
@@ -141,13 +135,13 @@
     (should= '(foo bar baz) (m/apply-mutation '(foo bar baz) 0))))
 
 (describe "rebuild-coll"
-  (it "rebuilds seqs by walking each child"
-    (let [walk (fn [_ _ node] (if (number? node) (inc node) node))]
-      (should= '(+ 2 3) (#'m/rebuild-coll walk nil nil '(+ 1 2)))))
-
-  (it "rebuilds vectors by walking each child"
-    (let [walk (fn [_ _ node] (if (number? node) (inc node) node))]
-      (should= [2 3] (#'m/rebuild-coll walk nil nil [1 2]))))
+  (it "rebuilds collections by walking each child"
+    (let [increment-numbers (fn [_ _ node] (if (number? node) (inc node) node))]
+      (doseq [[input expected]
+              [['(+ 1 2) '(+ 2 3)]
+               [[1 2] [2 3]]
+               [#{1 2} #{2 3}]]]
+        (should= expected (#'m/rebuild-coll increment-numbers nil nil input)))))
 
   (it "rebuilds maps by walking keys and values"
     (let [walk (fn [_ _ node]
@@ -156,10 +150,6 @@
                    (= node 1) 2
                    :else node))]
       (should= {:b 2} (#'m/rebuild-coll walk nil nil {:a 1}))))
-
-  (it "rebuilds sets by walking each member"
-    (let [walk (fn [_ _ node] (if (number? node) (inc node) node))]
-      (should= #{2 3} (#'m/rebuild-coll walk nil nil #{1 2}))))
 
   (it "returns non-collections unchanged"
     (let [walk (fn [_ _ node] (if (number? node) (inc node) node))]

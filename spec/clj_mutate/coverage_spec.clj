@@ -20,25 +20,22 @@
       (should= #{1 3 5} (get result "src/empire/combat.cljc"))
       (should= #{11} (get result "src/empire/game_loop.cljc"))))
 
-  (it "returns empty map for empty input"
-    (should= {} (cov/parse-lcov "")))
-
-  (it "excludes lines with zero count"
-    (let [result (cov/parse-lcov "SF:foo.cljc\nDA:1,0\nDA:2,0\nend_of_record\n")]
-      (should= #{} (get result "foo.cljc"))))
-
-  (it "ignores DA entries before any SF record"
-    (let [result (cov/parse-lcov "DA:1,3\nSF:foo.cljc\nDA:2,4\nend_of_record\n")]
-      (should= nil (get result nil))
-      (should= #{2} (get result "foo.cljc"))))
-
-  (it "ignores non-SF non-DA lines"
-    (let [result (cov/parse-lcov "TN:\nSF:foo.cljc\nFN:1,bar\nDA:2,1\nend_of_record\n")]
-      (should= #{2} (get result "foo.cljc"))))
-
-  (it "keeps existing result when DA count is zero or file missing"
-    (let [result (cov/parse-lcov "SF:foo.cljc\nDA:1,1\nDA:2,0\nend_of_record\nDA:9,7\n")]
-      (should= #{1} (get result "foo.cljc")))))
+  (it "handles empty input and ignorable LCOV lines"
+    (doseq [[lcov-text assertions]
+            [[""
+              [#(should= {} %)]]
+             ["SF:foo.cljc\nDA:1,0\nDA:2,0\nend_of_record\n"
+              [#(should= #{} (get % "foo.cljc"))]]
+             ["DA:1,3\nSF:foo.cljc\nDA:2,4\nend_of_record\n"
+              [#(should= nil (get % nil))
+               #(should= #{2} (get % "foo.cljc"))]]
+             ["TN:\nSF:foo.cljc\nFN:1,bar\nDA:2,1\nend_of_record\n"
+              [#(should= #{2} (get % "foo.cljc"))]]
+             ["SF:foo.cljc\nDA:1,1\nDA:2,0\nend_of_record\nDA:9,7\n"
+              [#(should= #{1} (get % "foo.cljc"))]]]]
+      (let [result (cov/parse-lcov lcov-text)]
+        (doseq [assertion assertions]
+          (assertion result))))))
 
 (describe "covered-lines"
   (it "returns covered lines for exact path match"

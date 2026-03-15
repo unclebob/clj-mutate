@@ -139,6 +139,7 @@ It now splits repetition into separate channels:
 By default, SCRAP reports guidance for an AI assistant:
 
 - whether a file should be refactored
+- whether the right move is `SPLIT`, `LOCAL`, or `STABLE`
 - where the pressure is concentrated
 - how to refactor it
 - the worst examples in the file
@@ -209,6 +210,24 @@ Recommendation lines are ranked by confidence:
 - `LOW`: broader design suggestions such as splitting a file by responsibility
 
 SCRAP can also report `STABLE`. That means the file is noisy enough to measure but not problematic enough to justify refactoring right now.
+
+SCRAP also reports a `remediation-mode`:
+
+- `STABLE`: leave the file alone
+- `LOCAL`: keep the file intact and clean up individual examples, assertions, or repeated scaffolding
+- `SPLIT`: the pressure is spread across enough hotspots that the first move should be splitting the spec file by responsibility before local cleanup
+
+That distinction is important for an AI assistant. A `SPLIT` recommendation means:
+
+- do not spend time polishing isolated examples first
+- identify coherent describe/context groups
+- split the file into narrower spec namespaces
+- then rerun SCRAP on the resulting files for local cleanup guidance
+
+A `LOCAL` recommendation means the opposite:
+
+- keep the file together
+- fix assertions, duplication, or oversized examples in place
 
 ## Baselines
 

@@ -30,28 +30,18 @@
         (finally
           (workers/cleanup-worker-dirs! base-dir)))))
 
-  (it "symlinks spec/ directory"
-    (let [base-dir "target/test-workers-spec"
-          source-rel "src/myapp/foo.cljc"
-          content "(ns myapp.foo)\n"
-          dirs (workers/create-worker-dirs! base-dir source-rel content 1)]
-      (try
-        (let [spec-path (.toPath (File. (str (first dirs) "/spec")))]
-          (should (Files/isSymbolicLink spec-path)))
-        (finally
-          (workers/cleanup-worker-dirs! base-dir)))))
-
-  (it "symlinks .cpcache/ if it exists"
-    (let [base-dir "target/test-workers-cpcache"
+  (it "symlinks shared project directories into worker roots"
+    (let [base-dir "target/test-workers-links"
           source-rel "src/myapp/foo.cljc"
           content "(ns myapp.foo)\n"
           cpcache-dir (File. ".cpcache")]
       (let [dirs (workers/create-worker-dirs! base-dir source-rel content 1)]
         (try
-          (let [cp-link (File. (str (first dirs) "/.cpcache"))]
-            (if (.exists cpcache-dir)
-              (should (Files/isSymbolicLink (.toPath cp-link)))
-              (should-not (.exists cp-link))))
+          (doseq [[entry expected-link?]
+                  [["spec" true]
+                   [".cpcache" (.exists cpcache-dir)]]]
+            (should= expected-link?
+                     (Files/isSymbolicLink (.toPath (File. (str (first dirs) "/" entry))))))
           (finally
             (workers/cleanup-worker-dirs! base-dir)))))))
 

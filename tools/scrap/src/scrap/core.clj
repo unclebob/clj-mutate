@@ -619,6 +619,31 @@
       (>= score 18) "MEDIUM"
       :else "LOW")))
 
+(defn- split-candidate?
+  [summary blocks]
+  (let [example-count (or (:example-count summary) 0)
+        max-scrap (or (:max-scrap summary) 0)
+        avg-scrap (or (:avg-scrap summary) 0)
+        harmful-duplication (or (:effective-duplication-score summary) 0)
+        subject-repetition (or (:subject-repetition-score summary) 0)
+        helper-hidden (or (:helper-hidden-example-count summary) 0)
+        high-pressure-blocks (count (filter #(contains? #{"HIGH" "CRITICAL"} (pressure-level (:summary %))) blocks))]
+    (and (not (stable-summary? summary))
+         (>= example-count 12)
+         (or (>= high-pressure-blocks 2)
+             (>= max-scrap 35))
+         (or (>= avg-scrap 10)
+             (>= harmful-duplication 20)
+             (>= subject-repetition 12)
+             (pos? helper-hidden)))))
+
+(defn- remediation-mode
+  [summary blocks]
+  (cond
+    (stable-summary? summary) "STABLE"
+    (split-candidate? summary blocks) "SPLIT"
+    :else "LOCAL"))
+
 (defn- recommendation
   [confidence text]
   {:confidence confidence
@@ -626,8 +651,9 @@
    :text text})
 
 (defn- recommendation-actions
-  [summary]
-  (if (stable-summary? summary)
+  [summary blocks]
+  (let [mode (remediation-mode summary blocks)]
+    (if (= mode "STABLE")
     [(recommendation 3 "No refactor recommended; the file is structurally stable enough to leave alone.")]
     (let [example-count (or (:example-count summary) 0)
           low-assertion-ratio (ratio (or (:low-assertion-examples summary) 0) example-count)
@@ -636,13 +662,16 @@
           mocking-ratio (ratio (or (:with-redefs-examples summary) 0) example-count)
           harmful-duplication (or (:effective-duplication-score summary) 0)]
       (->> (cond-> []
+             (= mode "SPLIT")
+             (conj (recommendation 3 "Split this spec file by responsibility before attempting local cleanup; the structural pressure is spread across multiple hotspots."))
+
              (pos? (or (:coverage-matrix-candidates summary) 0))
              (conj (recommendation 3 "Convert repeated low-complexity examples into table-driven checks; treat this as coverage-matrix repetition, not harmful duplication."))
 
              (or (> zero-assertion-ratio 0.0) (> low-assertion-ratio 0.4))
              (conj (recommendation 3 "Strengthen assertions in weak examples before doing structural cleanup."))
 
-             (> (or (:max-scrap summary) 0) 20)
+             (and (= mode "LOCAL") (> (or (:max-scrap summary) 0) 20))
              (conj (recommendation 3 "Split oversized examples into narrower examples."))
 
              (> harmful-duplication 0)
@@ -657,19 +686,21 @@
              (> (or (:helper-hidden-example-count summary) 0) 0)
              (conj (recommendation 1 "Be skeptical of helper extraction that only hides setup; helper-hidden complexity should still count as complexity."))
 
-             (> (or (:avg-scrap summary) 0) 12)
+             (and (= mode "LOCAL") (> (or (:avg-scrap summary) 0) 12))
              (conj (recommendation 1 "Consider splitting this file or block by responsibility.")))
            (sort-by (juxt (comp - :confidence) :text))
-           vec))))
+           vec)))))
 
 (defn- guidance
   [{:keys [summary blocks examples]}]
   (let [file-score (refactor-pressure-score summary)
         sorted-blocks (sort-by #(refactor-pressure-score (:summary %)) > blocks)
-        sorted-examples (sort-by :scrap > examples)]
+        sorted-examples (sort-by :scrap > examples)
+        mode (remediation-mode summary blocks)]
     {:file-score file-score
      :file-level (pressure-level summary)
-     :actions (vec (take 4 (recommendation-actions summary)))
+     :remediation-mode mode
+     :actions (vec (take 4 (recommendation-actions summary blocks)))
      :top-blocks (vec (take default-top-block-count sorted-blocks))
      :top-examples (vec (take default-top-example-count sorted-examples))}))
 
@@ -951,9 +982,10 @@
 
 (defn- render-guidance-report
   [{:keys [path summary blocks examples] :as report}]
-  (let [{:keys [file-score file-level actions top-blocks top-examples]} (guidance report)
+  (let [{:keys [file-score file-level remediation-mode actions top-blocks top-examples]} (guidance report)
         why-section
-        (str "  why:\n"
+        (str "  remediation-mode: " remediation-mode "\n"
+             "  why:\n"
              "    avg-scrap: " (format "%.1f" (double (or (:avg-scrap summary) 0.0))) "\n"
              "    max-scrap: " (or (:max-scrap summary) 0) "\n"
              "    harmful-duplication-score: " (or (:harmful-duplication-score summary) 0) "\n"
