@@ -318,6 +318,34 @@
                            repeated-literal-examples
                            repeated-arrange-examples)}))
 
+(defn- summarize-examples
+  [examples]
+  (let [total (count examples)
+        avg-scrap (if (pos? total)
+                    (/ (reduce + (map :scrap examples)) total)
+                    0.0)]
+    (merge
+      {:example-count total
+       :avg-scrap avg-scrap
+       :max-scrap (if (seq examples) (apply max (map :scrap examples)) 0)
+       :branching-examples (count (filter #(pos? (:branches %)) examples))
+       :low-assertion-examples (count (filter #(<= (:assertions %) 1) examples))
+       :with-redefs-examples (count (filter #(pos? (:with-redefs %)) examples))}
+      (summarize-duplication examples))))
+
+(defn- summarize-blocks
+  [examples]
+  (->> examples
+       (group-by :describe-path)
+       (remove (fn [[path _]] (empty? path)))
+       (map (fn [[path block-examples]]
+              {:path path
+               :summary (summarize-examples block-examples)
+               :worst-example (first (sort-by :scrap > block-examples))}))
+       (sort-by (fn [{:keys [path]}]
+                  [(count path) (str/join " / " path)]))
+       vec))
+
 (defn- process-char [state c next-c]
   (let [{:keys [mode depth line escape skip]} state]
     (cond
@@ -433,23 +461,13 @@
        :examples []}
       (let [helpers (helper-symbols forms)
             examples (vec (collect-examples forms helpers [] []))
-            total (count examples)
-            avg-scrap (if (pos? total)
-                        (/ (reduce + (map :scrap examples)) total)
-                        0.0)
-            duplication (summarize-duplication examples)]
+            summary (summarize-examples examples)]
         {:path path
          :structure-errors structure-errors
          :parse-error nil
          :examples examples
-         :summary (merge
-                    {:example-count total
-                     :avg-scrap avg-scrap
-                     :max-scrap (if (seq examples) (apply max (map :scrap examples)) 0)
-                     :branching-examples (count (filter #(pos? (:branches %)) examples))
-                     :low-assertion-examples (count (filter #(<= (:assertions %) 1) examples))
-                     :with-redefs-examples (count (filter #(pos? (:with-redefs %)) examples))}
-                    duplication)}))))
+         :summary summary
+         :blocks (summarize-blocks examples)}))))
 
 (defn analyze-file
   [path]
@@ -481,7 +499,7 @@
     "none"))
 
 (defn- render-file-report
-  [{:keys [path structure-errors parse-error examples summary]}]
+  [{:keys [path structure-errors parse-error examples summary blocks]}]
   (str
     path "\n"
     (when (seq structure-errors)
@@ -513,6 +531,18 @@
                (str "  worst-example: "
                     (str/join " / " (conj (:describe-path top-example) (:name top-example)))
                     " (SCRAP " (:scrap top-example) ")\n")))))
+    (when (seq blocks)
+      (str "\n  blocks:\n"
+           (str/join
+             "\n"
+             (for [{:keys [path summary worst-example]} blocks]
+               (str "    "
+                    (str/join " / " path) "\n"
+                    "      examples: " (:example-count summary) "\n"
+                    "      avg-scrap: " (format "%.1f" (double (or (:avg-scrap summary) 0.0))) "\n"
+                    "      max-scrap: " (:max-scrap summary) "\n"
+                    "      duplication-score: " (or (:duplication-score summary) 0) "\n"
+                    "      worst-example: " (:name worst-example) " (SCRAP " (:scrap worst-example) ")")))))
     (when (seq examples)
       (str "\n"
            (str/join

@@ -23,7 +23,9 @@
       (should= [] (:structure-errors report))
       (should= 1 (count (:examples report)))
       (should= 1 (get-in report [:summary :example-count]))
-      (should= 1 (get-in report [:summary :low-assertion-examples]))))
+      (should= 1 (get-in report [:summary :low-assertion-examples]))
+      (should= ["math"] (-> report :blocks first :path))
+      (should= 1 (-> report :blocks first :summary :example-count))))
 
   (it "scores complex examples higher and reports smells"
     (let [report (scrap/analyze-source
@@ -107,6 +109,13 @@
                                  :with-redefs 0
                                  :helper-calls 0
                                  :smells []}]
+                     :blocks [{:path ["math"]
+                               :summary {:avg-scrap 9.0
+                                         :max-scrap 9
+                                         :example-count 1
+                                         :duplication-score 0}
+                               :worst-example {:name "adds"
+                                               :scrap 9}}]
                      :summary {:avg-scrap 9.0
                                :max-scrap 9
                                :example-count 1
@@ -115,5 +124,6 @@
                                :with-redefs-examples 0}}])]
       (should-contain "SCRAP Report" output)
       (should-contain "structure-errors" output)
+      (should-contain "blocks:" output)
       (should-contain "Worst Examples" output)
       (should-contain "math / adds" output))))
