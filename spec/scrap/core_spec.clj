@@ -95,6 +95,41 @@
       (should= 2 (:coverage-matrix-candidates summary))
       (should (< (:effective-duplication-score summary) (:duplication-score summary)))))
 
+  (it "charges helper-hidden complexity back to examples that call spec-local helpers"
+    (let [report (scrap/analyze-source
+                   (str "(describe \"helpers\"\n"
+                        "  (defn temp-lcov []\n"
+                        "    (let [tmp (java.io.File/createTempFile \"x\" \".info\")]\n"
+                        "      (spit tmp \"alpha\")\n"
+                        "      (slurp tmp)\n"
+                        "      (spit tmp \"beta\")\n"
+                        "      (slurp tmp)\n"
+                        "      (.delete tmp)\n"
+                        "      tmp))\n"
+                        "  (it \"uses helper\"\n"
+                        "    (temp-lcov)\n"
+                        "    (should= 1 1)))\n")
+                   "spec/helpers_spec.clj")
+          example (first (:examples report))]
+      (should (< 0 (:helper-hidden-lines example)))
+      (should-contain "helper-hidden-complexity" (:smells example))))
+
+  (it "can compare current reports to a saved baseline"
+    (let [before (scrap/analyze-source
+                   "(describe \"math\"\n  (it \"adds\"\n    (should= 3 (+ 1 2))))\n"
+                   "spec/math_spec.clj")
+          after (scrap/analyze-source
+                  (str "(describe \"math\"\n"
+                       "  (it \"adds\"\n"
+                       "    (let [result (+ 1 2)]\n"
+                       "      (should= 3 result)\n"
+                       "      (should= true (number? result)))))\n")
+                  "spec/math_spec.clj")
+          baseline (scrap/baseline-document ["spec/math_spec.clj"] [before])
+          compared (first (scrap/compare-reports baseline [after]))]
+      (should= :mixed (get-in compared [:comparison :verdict]))
+      (should (contains? (:comparison compared) :file-score-delta))))
+
 (describe "collect-spec-files"
   (it "collects spec files from a directory tree"
     (let [root (java.nio.file.Files/createTempDirectory "scrap-specs" (make-array java.nio.file.attribute.FileAttribute 0))
@@ -143,6 +178,7 @@
       (should-contain "where:" output)
       (should-contain "how:" output)
       (should-contain "coverage-matrix-candidates:" output)
+      (should-contain "HIGH:" output)
       (should-contain "Worst Examples" output)
       (should-contain "math / adds" output)))
 
@@ -180,3 +216,44 @@
       (should-contain "avg-scrap:" output)
       (should-contain "duplication-score:" output)
       (should-contain "coverage-matrix-candidates:" output))))
+
+  (it "renders comparison details when a baseline is attached"
+    (let [output (scrap/render-report
+                   [{:path "spec/foo_spec.clj"
+                     :structure-errors []
+                     :parse-error nil
+                     :examples [{:describe-path ["math"]
+                                 :name "adds"
+                                 :scrap 9
+                                 :raw-line-count 4
+                                 :line-count 4
+                                 :assertions 1
+                                 :branches 0
+                                 :setup-depth 0
+                                 :with-redefs 0
+                                 :helper-calls 0
+                                 :helper-hidden-lines 0
+                                 :smells []}]
+                     :blocks []
+                     :summary {:avg-scrap 9.0
+                               :max-scrap 9
+                               :example-count 1
+                               :branching-examples 0
+                               :low-assertion-examples 1
+                               :zero-assertion-examples 0
+                               :with-redefs-examples 0
+                               :coverage-matrix-candidates 0
+                               :duplication-score 0
+                               :harmful-duplication-score 0
+                               :effective-duplication-score 0}
+                     :comparison {:verdict :worse
+                                  :file-score-delta 5.0
+                                  :avg-scrap-delta 1.0
+                                  :max-scrap-delta 2
+                                  :harmful-duplication-delta 1
+                                  :case-matrix-delta 0
+                                  :helper-hidden-delta 1}}]
+                   false)]
+      (should-contain "comparison:" output)
+      (should-contain "verdict: worse" output)
+      (should-contain "Refactor appears negative" output)))

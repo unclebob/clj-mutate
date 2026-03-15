@@ -22,6 +22,24 @@ Show the full metric dump for each file, block, and example:
 clj -M:scrap spec --verbose
 ```
 
+Emit machine-readable JSON instead of the text report:
+
+```bash
+clj -M:scrap spec --json
+```
+
+Write a sidecar baseline under `target/scrap/`:
+
+```bash
+clj -M:scrap spec --write-baseline
+```
+
+Compare the current report to an earlier baseline:
+
+```bash
+clj -M:scrap spec --compare target/scrap/spec.json
+```
+
 Run SCRAP against a specific file or directory:
 
 ```bash
@@ -46,11 +64,14 @@ SCRAP includes structural validation for common Speclj mistakes:
 Per `it` example:
 
 - line count
+- raw line count
 - assertion count
 - branch count
 - setup depth
 - `with-redefs` count
 - helper-call count
+- helper-hidden line count
+- whether the example is already table-driven
 - temp-resource work
 - SCRAP score
 - smell labels
@@ -70,14 +91,22 @@ Per spec file:
 - max SCRAP
 - branching example count
 - low-assertion example count
+- zero-assertion example count
 - `with-redefs` example count
+- helper-hidden example count
 - duplication score
-- repeated setup examples
-- repeated fixture examples
-- repeated literal examples
-- repeated arrange examples
-- setup, literal, and arrange shape diversity
-- average setup, fixture, literal, and arrange similarity
+- harmful duplication score
+- effective duplication score
+- setup duplication score
+- assertion duplication score
+- fixture duplication score
+- literal duplication score
+- arrange duplication score
+- subject repetition score
+- coverage-matrix candidate count
+- case-matrix repetition count
+- setup, assertion, literal, and arrange shape diversity
+- average setup, assertion, fixture, literal, arrange, and subject similarity
 
 ## Fuzzy Duplication
 
@@ -99,6 +128,12 @@ That means comments and whitespace do not matter, and examples can still match w
 
 SCRAP compares normalized feature sets with Jaccard similarity and treats examples as duplicated when similarity is at least `0.5`.
 
+It now splits repetition into separate channels:
+
+- harmful duplication: repeated setup, assertion, fixture, or arrange scaffolding
+- case-matrix repetition: repeated low-complexity examples that are likely coverage tables
+- subject repetition: repeated focus on the same production API, which is often fine and is not heavily penalized
+
 ## Output
 
 By default, SCRAP reports guidance for an AI assistant:
@@ -115,10 +150,27 @@ With `--verbose`, SCRAP reports the full metric set:
 - per-example metrics
 - a global worst-examples list
 
+With `--json`, SCRAP emits the same report structure as data.
+
+With `--write-baseline`, SCRAP writes a sidecar baseline to `target/scrap/`.
+
+With `--compare`, SCRAP attaches comparison data to each file report:
+
+- verdict: `improved`, `worse`, `mixed`, or `unchanged`
+- file-score delta
+- average/max SCRAP deltas
+- harmful duplication delta
+- case-matrix delta
+- helper-hidden delta
+
+If a refactor made the file structurally worse, the text report says so explicitly and recommends reverting or simplifying helper extraction.
+
 SCRAP distinguishes between:
 
 - harmful duplication: repeated setup, fixture, or arrange scaffolding that should usually be extracted or split
 - coverage-matrix repetition: many small, low-complexity examples with similar structure that are often better converted into table-driven checks
+
+SCRAP also tracks helper-hidden complexity. If an example gets shorter only because setup moved into a spec-local helper, the helper body is still charged back to the example. That prevents helper extraction from looking like an automatic improvement.
 
 That distinction exists so an AI assistant does not misread a block like option parsing or validation matrices as purely bad duplication.
 
@@ -149,5 +201,26 @@ When SCRAP reports high `effective-duplication-score`, the intended interpretati
 
 - repeated scaffolding is dominating the file or block
 - extract setup, extract helpers, or split the block/file
+
+Recommendation lines are ranked by confidence:
+
+- `HIGH`: directly actionable structural problems such as zero-assertion specs, oversized examples, or obvious coverage-matrix cases
+- `MEDIUM`: likely cleanup opportunities such as harmful duplication or heavy mocking
+- `LOW`: broader design suggestions such as splitting a file by responsibility
+
+SCRAP can also report `STABLE`. That means the file is noisy enough to measure but not problematic enough to justify refactoring right now.
+
+## Baselines
+
+SCRAP baselines are sidecar analysis artifacts, not source comments.
+
+They live under `target/scrap/` because SCRAP scores are heuristic and tool-version dependent. Embedding them in spec files would create noisy diffs and stale source metadata.
+
+The intended workflow is:
+
+1. Run `clj -M:scrap spec/path --write-baseline`
+2. Refactor the spec
+3. Run `clj -M:scrap spec/path --compare target/scrap/...`
+4. If the verdict is `worse`, inspect the helper-hidden and harmful-duplication deltas before keeping the refactor
 
 In both cases, the recommendation is advisory. The assistant should inspect the file and decide whether the recommendation fits the real testing intent before changing code.
