@@ -6,6 +6,8 @@ It is aimed at test code in the same way CRAP is aimed at production code. SCRAP
 
 Its overall goal is to guide an AI assistant in whether, where, and how to refactor a poorly structured spec file.
 
+The output is a set of recommendations, not directives. An AI assistant should treat SCRAP as decision support, then confirm the recommendation against the actual structure and intent of the spec file before refactoring.
+
 ## Usage
 
 Run SCRAP against the whole spec tree:
@@ -147,3 +149,5 @@ When SCRAP reports high `effective-duplication-score`, the intended interpretati
 
 - repeated scaffolding is dominating the file or block
 - extract setup, extract helpers, or split the block/file
+
+In both cases, the recommendation is advisory. The assistant should inspect the file and decide whether the recommendation fits the real testing intent before changing code.
