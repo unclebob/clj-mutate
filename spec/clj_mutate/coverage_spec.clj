@@ -127,24 +127,22 @@
       (.delete temp))))
 
 (describe "stale-reason"
-  (it "returns :missing when lcov file does not exist"
+  (it "reports missing, stale, and fresh lcov states"
     (let [missing (java.io.File. (str "/tmp/missing-lcov-" (System/nanoTime) ".info"))]
       (java.nio.file.Files/deleteIfExists (.toPath missing))
-      (should= :missing (#'cov/stale-reason missing "src/empire/combat.cljc"))))
-
-  (it "returns :stale when lcov is older than project inputs"
-    (let [temp (java.io.File/createTempFile "lcov" ".info")]
-      (with-redefs [cov/newest-input-mtime (fn [_] 200)]
-        (.setLastModified temp 100)
-        (should= :stale (#'cov/stale-reason temp "src/empire/combat.cljc")))
-      (.delete temp)))
-
-  (it "returns nil when lcov is fresh"
-    (let [temp (java.io.File/createTempFile "lcov" ".info")]
-      (with-redefs [cov/newest-input-mtime (fn [_] 100)]
-        (.setLastModified temp 200)
-        (should-be-nil (#'cov/stale-reason temp "src/empire/combat.cljc")))
-      (.delete temp))))
+      (should= :missing (#'cov/stale-reason missing "src/empire/combat.cljc")))
+    (doseq [[input-mtime file-mtime expected]
+            [[200 100 :stale]
+             [100 200 nil]]]
+      (let [temp (java.io.File/createTempFile "lcov" ".info")]
+        (try
+          (with-redefs [cov/newest-input-mtime (fn [_] input-mtime)]
+            (.setLastModified temp file-mtime)
+            (if expected
+              (should= expected (#'cov/stale-reason temp "src/empire/combat.cljc"))
+              (should-be-nil (#'cov/stale-reason temp "src/empire/combat.cljc"))))
+          (finally
+            (.delete temp)))))))
 
 (describe "newest-file-mtime"
   (it "returns 0 for a missing directory"

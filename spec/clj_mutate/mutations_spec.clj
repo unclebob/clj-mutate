@@ -42,46 +42,36 @@
     (should= [] (m/find-mutations :literal)))
 
 (describe "equivalent mutant suppression"
-  (it "suppresses < -> <= when comparing (rand) to a number"
-    (let [sites (m/find-mutations '(if (< (rand) 0.5) :a :b))]
-      (should-not (some #(and (= (:original %) '<) (= (:mutant %) '<=)) sites))))
+  (it "suppresses rand-based comparison mutations"
+    (doseq [[form original mutant]
+            [['(if (< (rand) 0.5) :a :b) '< '<=]
+             ['(if (<= (rand) 0.5) :a :b) '<= '<]
+             ['(if (> (rand) 0.5) :a :b) '> '>=]]]
+      (let [sites (m/find-mutations form)]
+        (should-not (some #(and (= (:original %) original) (= (:mutant %) mutant)) sites)))))
 
-  (it "suppresses <= -> < when comparing (rand) to a number"
-    (let [sites (m/find-mutations '(if (<= (rand) 0.5) :a :b))]
-      (should-not (some #(and (= (:original %) '<=) (= (:mutant %) '<)) sites))))
-
-  (it "does not suppress < -> <= for non-rand comparisons"
-    (let [sites (m/find-mutations '(if (< x 10) :a :b))]
-      (should (some #(and (= (:original %) '<) (= (:mutant %) '<=)) sites))))
-
-  (it "suppresses > -> >= when comparing (rand) to a number"
-    (let [sites (m/find-mutations '(if (> (rand) 0.5) :a :b))]
-      (should-not (some #(and (= (:original %) '>) (= (:mutant %) '>=)) sites))))
-
-  (it "does not suppress > -> >= for non-rand comparisons"
-    (let [sites (m/find-mutations '(if (> hits 0) :a :b))]
-      (should (some #(and (= (:original %) '>) (= (:mutant %) '>=)) sites)))))
+  (it "does not suppress non-rand comparison mutations"
+    (doseq [[form original mutant]
+            [['(if (< x 10) :a :b) '< '<=]
+             ['(if (> hits 0) :a :b) '> '>=]]]
+      (let [sites (m/find-mutations form)]
+        (should (some #(and (= (:original %) original) (= (:mutant %) mutant)) sites))))))
 
 (describe "rand-nth guard suppression"
-  (it "suppresses = inside rand-nth single-element guard"
-    (let [sites (m/find-mutations '(if (= 1 (count v)) (first v) (rand-nth v)))]
-      (should-not (some #(and (= (:original %) '=) (= (:mutant %) 'not=)) sites))))
+  (it "suppresses mutations inside the rand-nth single-element guard"
+    (doseq [[original mutant]
+            [['= 'not=]
+             ['if 'if-not]
+             [1 0]]]
+      (let [sites (m/find-mutations '(if (= 1 (count v)) (first v) (rand-nth v)))]
+        (should-not (some #(and (= (:original %) original) (= (:mutant %) mutant)) sites)))))
 
-  (it "suppresses if inside rand-nth single-element guard"
-    (let [sites (m/find-mutations '(if (= 1 (count v)) (first v) (rand-nth v)))]
-      (should-not (some #(and (= (:original %) 'if) (= (:mutant %) 'if-not)) sites))))
-
-  (it "suppresses 1 inside rand-nth single-element guard"
-    (let [sites (m/find-mutations '(if (= 1 (count v)) (first v) (rand-nth v)))]
-      (should-not (some #(and (= (:original %) 1) (= (:mutant %) 0)) sites))))
-
-  (it "does not suppress = outside rand-nth guard"
-    (let [sites (m/find-mutations '(if (= 1 x) :a :b))]
-      (should (some #(and (= (:original %) '=) (= (:mutant %) 'not=)) sites))))
-
-  (it "does not suppress if outside rand-nth guard"
-    (let [sites (m/find-mutations '(if (> x 0) :a :b))]
-      (should (some #(and (= (:original %) 'if) (= (:mutant %) 'if-not)) sites)))))
+  (it "does not suppress mutations outside the rand-nth guard"
+    (doseq [[form original mutant]
+            [['(if (= 1 x) :a :b) '= 'not=]
+             ['(if (> x 0) :a :b) 'if 'if-not]]]
+      (let [sites (m/find-mutations form)]
+        (should (some #(and (= (:original %) original) (= (:mutant %) mutant)) sites))))))
 
 (describe "rand-nth literal pool suppression"
   (it "suppresses 0 inside (rand-nth [0 1])"

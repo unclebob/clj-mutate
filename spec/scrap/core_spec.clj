@@ -114,6 +114,28 @@
       (should (< 0 (:helper-hidden-lines example)))
       (should-contain "helper-hidden-complexity" (:smells example))))
 
+  (it "treats merged table-driven api contract checks as low-pressure examples"
+    (let [report (scrap/analyze-source
+                   (str "(describe \"runner\"\n"
+                        "  (it \"accepts explicit arities\"\n"
+                        "    (let [dir-path \"target/x\"]\n"
+                        "      (doseq [invoke! [(fn [] (runner/run-specs 100 dir-path))\n"
+                        "                       (fn [] (runner/run-specs 100 dir-path \"clj -M:spec\"))]]\n"
+                        "        (let [result (try\n"
+                        "                       (invoke!)\n"
+                        "                       :no-error\n"
+                        "                       (catch Exception e\n"
+                        "                         (if (instance? clojure.lang.ArityException e)\n"
+                        "                           :arity-exception\n"
+                        "                           :other-error)))]\n"
+                        "          (should-not= :arity-exception result)))))\n")
+                   "spec/runner_spec.clj")
+          example (first (:examples report))]
+      (should= true (:api-contract? example))
+      (should-not-contain "low-assertion-density" (:smells example))
+      (should-not-contain "large-example" (:smells example))
+      (should (< (:scrap example) 35))))
+
   (it "can compare current reports to a saved baseline"
     (let [before (scrap/analyze-source
                    "(describe \"math\"\n  (it \"adds\"\n    (should= 3 (+ 1 2))))\n"

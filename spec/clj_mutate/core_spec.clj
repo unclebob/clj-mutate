@@ -77,205 +77,98 @@
       (.delete temp-file))))
 
 (describe "validate-args"
-  (it "returns error when no args given"
-    (let [result (core/validate-args [])]
-      (should-contain :error result)))
-
-  (it "returns help when --help is provided"
-    (let [result (core/validate-args ["--help"])]
-      (should= true (:help result))
-      (should-contain "Usage:" (:usage result))))
-
-  (it "returns error when source file doesn't exist"
-    (let [result (core/validate-args ["nonexistent.cljc"])]
-      (should-contain :error result)))
-
-  (it "returns an error for unknown options"
-    (let [temp (java.io.File/createTempFile "src" ".cljc")]
+  (defn with-temp-source-path [f]
+    (let [temp (java.io.File/createTempFile "src" ".cljc")
+          temp-path (.getPath temp)]
       (spit temp "(ns test-ns)")
-      (let [result (core/validate-args [(.getPath temp) "--bogus"])]
-        (should= "Unknown option: --bogus" (:error result))
-        (.delete temp))))
+      (try
+        (f temp-path)
+        (finally
+          (java.nio.file.Files/deleteIfExists (.toPath temp))))))
 
-  (it "returns an error for unexpected extra arguments"
-    (let [temp (java.io.File/createTempFile "src" ".cljc")]
-      (spit temp "(ns test-ns)")
-      (let [result (core/validate-args [(.getPath temp) "extra.cljc"])]
-        (should= "Unexpected extra argument: extra.cljc" (:error result))
-        (.delete temp))))
+  (it "returns the right validation errors"
+    (with-temp-source-path
+      (fn [temp-source-path]
+        (doseq [[args expected]
+                [[[] :missing-source]
+                 [["--help"] :help]
+                 [["nonexistent.cljc"] :missing-file]
+                 [[temp-source-path "--bogus"] "Unknown option: --bogus"]
+                 [[temp-source-path "extra.cljc"] "Unexpected extra argument: extra.cljc"]
+                 [[temp-source-path "--lines"] "Missing value for --lines."]
+                 [[temp-source-path "--timeout-factor"] "Missing value for --timeout-factor."]
+                 [[temp-source-path "--test-command"] "Missing value for --test-command."]
+                 [[temp-source-path "--max-workers"] "Missing value for --max-workers."]
+                 [[temp-source-path "--mutation-warning"] "Missing value for --mutation-warning."]
+                 [[temp-source-path "--timeout-factor" "0"] :error]
+                 [[temp-source-path "--test-command" "   "] "Missing value for --test-command."]
+                 [[temp-source-path "--max-workers" "0"] :error]
+                 [[temp-source-path "--mutation-warning" "0"] :error]]]
+          (let [result (core/validate-args args)]
+            (case expected
+              :missing-source (should-contain :error result)
+              :help (do
+                      (should= true (:help result))
+                      (should-contain "Usage:" (:usage result)))
+              :missing-file (should-contain :error result)
+              :error (should-contain :error result)
+              (should= expected (:error result))))))))
 
-  (it "returns source-path when file exists"
-    (let [temp (java.io.File/createTempFile "src" ".cljc")]
-      (spit temp "(ns test-ns)")
-      (let [result (core/validate-args [(.getPath temp)])]
-        (should= (.getPath temp) (:source-path result))
-        (should= 10 (:timeout-factor result))
-        (should= "clj -M:spec --tag ~no-mutate" (:test-command result))
-        (should= false (:since-last-run result))
-        (should= false (:mutate-all result))
-        (should= 50 (:mutation-warning result))
-        (should= nil (:max-workers result))
-        (.delete temp))))
+  (it "parses supported option values"
+    (with-temp-source-path
+      (fn [temp-source-path]
+        (doseq [[args assertions]
+                [[[temp-source-path]
+                  [#(should= temp-source-path (:source-path %))
+                   #(should= 10 (:timeout-factor %))
+                   #(should= "clj -M:spec --tag ~no-mutate" (:test-command %))
+                   #(should= false (:since-last-run %))
+                   #(should= false (:mutate-all %))
+                   #(should= 50 (:mutation-warning %))
+                   #(should= nil (:max-workers %))]]
+                 [[temp-source-path "--since-last-run"]
+                  [#(should= true (:since-last-run %))]]
+                 [[temp-source-path "--mutate-all"]
+                  [#(should= true (:mutate-all %))]]
+                 [[temp-source-path "--scan"]
+                  [#(should= true (:scan %))]]
+                 [[temp-source-path "--update-manifest"]
+                  [#(should= true (:update-manifest %))]]
+                 [[temp-source-path "--reuse-lcov"]
+                  [#(should= true (:reuse-lcov %))]]
+                 [[temp-source-path "--mutation-warning" "75"]
+                  [#(should= 75 (:mutation-warning %))]]
+                 [[temp-source-path "--timeout-factor" "7"]
+                  [#(should= 7 (:timeout-factor %))]]
+                 [[temp-source-path "--test-command" "clj -M:all-tests"]
+                  [#(should= "clj -M:all-tests" (:test-command %))]]
+                 [[temp-source-path "--max-workers" "3"]
+                  [#(should= 3 (:max-workers %))]]]]
+          (let [result (core/validate-args args)]
+            (doseq [assertion assertions]
+              (assertion result)))))))
 
-  (it "parses --since-last-run"
-    (let [temp (java.io.File/createTempFile "src" ".cljc")]
-      (spit temp "(ns test-ns)")
-      (let [result (core/validate-args [(.getPath temp) "--since-last-run"])]
-        (should= true (:since-last-run result))
-        (.delete temp))))
-
-  (it "parses --mutate-all"
-    (let [temp (java.io.File/createTempFile "src" ".cljc")]
-      (spit temp "(ns test-ns)")
-      (let [result (core/validate-args [(.getPath temp) "--mutate-all"])]
-        (should= true (:mutate-all result))
-        (.delete temp))))
-
-  (it "parses --scan"
-    (let [temp (java.io.File/createTempFile "src" ".cljc")]
-      (spit temp "(ns test-ns)")
-      (let [result (core/validate-args [(.getPath temp) "--scan"])]
-        (should= true (:scan result))
-        (.delete temp))))
-
-  (it "parses --update-manifest"
-    (let [temp (java.io.File/createTempFile "src" ".cljc")]
-      (spit temp "(ns test-ns)")
-      (let [result (core/validate-args [(.getPath temp) "--update-manifest"])]
-        (should= true (:update-manifest result))
-        (.delete temp))))
-
-  (it "parses --reuse-lcov"
-    (let [temp (java.io.File/createTempFile "src" ".cljc")]
-      (spit temp "(ns test-ns)")
-      (let [result (core/validate-args [(.getPath temp) "--reuse-lcov"])]
-        (should= true (:reuse-lcov result))
-        (.delete temp))))
-
-  (it "parses --mutation-warning"
-    (let [temp (java.io.File/createTempFile "src" ".cljc")]
-      (spit temp "(ns test-ns)")
-      (let [result (core/validate-args [(.getPath temp) "--mutation-warning" "75"])]
-        (should= 75 (:mutation-warning result))
-        (.delete temp))))
-
-  (it "returns errors for missing option values"
-    (let [temp (java.io.File/createTempFile "src" ".cljc")]
-      (spit temp "(ns test-ns)")
-      (should= "Missing value for --lines."
-               (:error (core/validate-args [(.getPath temp) "--lines"])))
-      (should= "Missing value for --timeout-factor."
-               (:error (core/validate-args [(.getPath temp) "--timeout-factor"])))
-      (should= "Missing value for --test-command."
-               (:error (core/validate-args [(.getPath temp) "--test-command"])))
-      (should= "Missing value for --max-workers."
-               (:error (core/validate-args [(.getPath temp) "--max-workers"])))
-      (should= "Missing value for --mutation-warning."
-               (:error (core/validate-args [(.getPath temp) "--mutation-warning"])))
-      (.delete temp)))
-
-  (it "rejects combining --lines with --since-last-run in either order"
-    (let [temp (java.io.File/createTempFile "src" ".cljc")]
-      (spit temp "(ns test-ns)")
-      (should-contain :error
-                      (core/validate-args [(.getPath temp) "--lines" "3" "--since-last-run"]))
-      (should-contain :error
-                      (core/validate-args [(.getPath temp) "--since-last-run" "--lines" "3"]))
-      (.delete temp)))
-
-  (it "rejects combining --mutate-all with --lines or --since-last-run"
-    (let [temp (java.io.File/createTempFile "src" ".cljc")]
-      (spit temp "(ns test-ns)")
-      (should-contain :error
-                      (core/validate-args [(.getPath temp) "--mutate-all" "--lines" "3"]))
-      (should-contain :error
-                      (core/validate-args [(.getPath temp) "--since-last-run" "--mutate-all"]))
-      (.delete temp)))
-
-  (it "rejects combining --scan with mutation execution options"
-    (let [temp (java.io.File/createTempFile "src" ".cljc")]
-      (spit temp "(ns test-ns)")
-      (should-contain :error
-                      (core/validate-args [(.getPath temp) "--scan" "--lines" "3"]))
-      (should-contain :error
-                      (core/validate-args [(.getPath temp) "--scan" "--since-last-run"]))
-      (should-contain :error
-                      (core/validate-args [(.getPath temp) "--scan" "--mutate-all"]))
-      (should-contain :error
-                      (core/validate-args [(.getPath temp) "--scan" "--timeout-factor" "7"]))
-      (should-contain :error
-                      (core/validate-args [(.getPath temp) "--scan" "--test-command" "clj -M:all-tests"]))
-      (should-contain :error
-                      (core/validate-args [(.getPath temp) "--scan" "--max-workers" "2"]))
-      (.delete temp)))
-
-  (it "rejects combining --update-manifest with mutation execution options"
-    (let [temp (java.io.File/createTempFile "src" ".cljc")]
-      (spit temp "(ns test-ns)")
-      (should-contain :error
-                      (core/validate-args [(.getPath temp) "--update-manifest" "--scan"]))
-      (should-contain :error
-                      (core/validate-args [(.getPath temp) "--update-manifest" "--lines" "3"]))
-      (should-contain :error
-                      (core/validate-args [(.getPath temp) "--update-manifest" "--since-last-run"]))
-      (should-contain :error
-                      (core/validate-args [(.getPath temp) "--update-manifest" "--mutate-all"]))
-      (should-contain :error
-                      (core/validate-args [(.getPath temp) "--update-manifest" "--timeout-factor" "7"]))
-      (should-contain :error
-                      (core/validate-args [(.getPath temp) "--update-manifest" "--test-command" "clj -M:all-tests"]))
-      (should-contain :error
-                      (core/validate-args [(.getPath temp) "--update-manifest" "--max-workers" "2"]))
-      (.delete temp)))
-
-  (it "parses --timeout-factor as a positive integer"
-    (let [temp (java.io.File/createTempFile "src" ".cljc")]
-      (spit temp "(ns test-ns)")
-      (let [result (core/validate-args [(.getPath temp) "--timeout-factor" "7"])]
-        (should= 7 (:timeout-factor result))
-        (.delete temp))))
-
-  (it "returns an error for non-positive --timeout-factor"
-    (let [temp (java.io.File/createTempFile "src" ".cljc")]
-      (spit temp "(ns test-ns)")
-      (let [result (core/validate-args [(.getPath temp) "--timeout-factor" "0"])]
-        (should-contain :error result)
-        (.delete temp))))
-
-  (it "parses --test-command"
-    (let [temp (java.io.File/createTempFile "src" ".cljc")]
-      (spit temp "(ns test-ns)")
-      (let [result (core/validate-args [(.getPath temp) "--test-command" "clj -M:all-tests"])]
-        (should= "clj -M:all-tests" (:test-command result))
-        (.delete temp))))
-
-  (it "returns an error for blank --test-command"
-    (let [temp (java.io.File/createTempFile "src" ".cljc")]
-      (spit temp "(ns test-ns)")
-      (let [result (core/validate-args [(.getPath temp) "--test-command" "   "])]
-        (should= "Missing value for --test-command." (:error result))
-        (.delete temp))))
-
-  (it "parses --max-workers as a positive integer"
-    (let [temp (java.io.File/createTempFile "src" ".cljc")]
-      (spit temp "(ns test-ns)")
-      (let [result (core/validate-args [(.getPath temp) "--max-workers" "3"])]
-        (should= 3 (:max-workers result))
-        (.delete temp))))
-
-  (it "returns an error for non-positive --max-workers"
-    (let [temp (java.io.File/createTempFile "src" ".cljc")]
-      (spit temp "(ns test-ns)")
-      (let [result (core/validate-args [(.getPath temp) "--max-workers" "0"])]
-        (should-contain :error result)
-        (.delete temp)))))
-
-  (it "returns an error for non-positive --mutation-warning"
-    (let [temp (java.io.File/createTempFile "src" ".cljc")]
-      (spit temp "(ns test-ns)")
-      (let [result (core/validate-args [(.getPath temp) "--mutation-warning" "0"])]
-        (should-contain :error result)
-        (.delete temp))))
+  (it "rejects incompatible option combinations"
+    (with-temp-source-path
+      (fn [temp-source-path]
+        (doseq [args [[temp-source-path "--lines" "3" "--since-last-run"]
+                      [temp-source-path "--since-last-run" "--lines" "3"]
+                      [temp-source-path "--mutate-all" "--lines" "3"]
+                      [temp-source-path "--since-last-run" "--mutate-all"]
+                      [temp-source-path "--scan" "--lines" "3"]
+                      [temp-source-path "--scan" "--since-last-run"]
+                      [temp-source-path "--scan" "--mutate-all"]
+                      [temp-source-path "--scan" "--timeout-factor" "7"]
+                      [temp-source-path "--scan" "--test-command" "clj -M:all-tests"]
+                      [temp-source-path "--scan" "--max-workers" "2"]
+                      [temp-source-path "--update-manifest" "--scan"]
+                      [temp-source-path "--update-manifest" "--lines" "3"]
+                      [temp-source-path "--update-manifest" "--since-last-run"]
+                      [temp-source-path "--update-manifest" "--mutate-all"]
+                      [temp-source-path "--update-manifest" "--timeout-factor" "7"]
+                      [temp-source-path "--update-manifest" "--test-command" "clj -M:all-tests"]
+                      [temp-source-path "--update-manifest" "--max-workers" "2"]]]
+          (should-contain :error (core/validate-args args)))))))
 
 (describe "partition-by-coverage"
   (it "separates covered from uncovered sites"

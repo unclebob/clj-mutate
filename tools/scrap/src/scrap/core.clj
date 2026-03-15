@@ -299,6 +299,21 @@
   {:helper-defs (collect-helper-defs forms)
    :helper-cache (atom {})})
 
+(defn- api-contract-example?
+  [metrics line-count phases]
+  (and
+       (<= (:assertions metrics) 2)
+       (<= (+ (:branches metrics) (:table-branches metrics)) 4)
+       (<= (:table-branches metrics) 1)
+       (<= (:with-redefs metrics) 0)
+       (<= (:helper-calls metrics) 1)
+       (<= (:helper-hidden-lines metrics) 0)
+       (<= (:temp-resources metrics) 0)
+       (<= (:large-literals metrics) 0)
+       (<= (count (:subject-symbols metrics)) 4)
+       (<= phases 1)
+       (<= line-count 18)))
+
 (defn- score-example
   [it-form helper-context inherited-setup-forms describe-path]
   (let [[_ name & body] it-form
@@ -322,9 +337,13 @@
                            (shape-features setup-signatures)
                            #{})
         phases (assertion-clusters body helper-context)
+        api-contract? (api-contract-example? metrics line-count phases)
+        scored-setup-depth (if api-contract?
+                             (max 0 (- (:max-setup-depth metrics) 2))
+                             (:max-setup-depth metrics))
         complexity (+ 1
                       (:branches metrics)
-                      (:max-setup-depth metrics)
+                      scored-setup-depth
                       (:helper-calls metrics)
                       (quot (:helper-hidden-lines metrics) 8))
         table-driven? (:table-driven? metrics)
@@ -332,7 +351,7 @@
                         (zero? (:assertions metrics))
                         (conj {:label "no-assertions" :penalty 10})
 
-                        (and (= 1 (:assertions metrics)) (> line-count 10) (not table-driven?))
+                        (and (= 1 (:assertions metrics)) (> line-count 10) (not table-driven?) (not api-contract?))
                         (conj {:label "low-assertion-density" :penalty 6})
 
                         (> phases 1)
@@ -341,7 +360,7 @@
                         (> (:with-redefs metrics) 3)
                         (conj {:label "high-mocking" :penalty 4})
 
-                        (> line-count 20)
+                        (and (> line-count 20) (not api-contract?))
                         (conj {:label "large-example" :penalty 4})
 
                         (pos? (:temp-resources metrics))
@@ -356,8 +375,11 @@
         branch-penalty (if table-driven?
                          (:table-branches metrics)
                          (+ (:branches metrics) (:table-branches metrics)))
-        scrap (+ (* (+ 1 branch-penalty (:max-setup-depth metrics) (:helper-calls metrics))
-                    (+ 1 branch-penalty (:max-setup-depth metrics) (:helper-calls metrics)))
+        scored-branch-penalty (if api-contract?
+                                (max 0 (- branch-penalty 2))
+                                branch-penalty)
+        scrap (+ (* (+ 1 scored-branch-penalty scored-setup-depth (:helper-calls metrics))
+                    (+ 1 scored-branch-penalty scored-setup-depth (:helper-calls metrics)))
                  smell-penalty)]
     {:name name
      :describe-path describe-path
@@ -372,6 +394,7 @@
      :helper-hidden-lines (:helper-hidden-lines metrics)
      :temp-resources (:temp-resources metrics)
      :table-driven? table-driven?
+     :api-contract? api-contract?
      :subject-symbols (:subject-symbols metrics)
      :assert-signatures assert-signatures
      :assert-features assert-features
@@ -517,7 +540,9 @@
       {:example-count total
        :avg-scrap avg-scrap
        :max-scrap (if (seq examples) (apply max (map :scrap examples)) 0)
-       :branching-examples (count (filter #(pos? (:branches %)) examples))
+       :branching-examples (count (filter #(and (pos? (:branches %))
+                                                (not (:table-driven? %)))
+                                          examples))
        :low-assertion-examples (count (filter #(<= (:assertions %) 1) examples))
        :with-redefs-examples (count (filter #(pos? (:with-redefs %)) examples))
        :zero-assertion-examples zero-assertion-examples
@@ -549,25 +574,40 @@
 
 (defn- stable-summary?
   [summary]
-  (and (pos? (or (:example-count summary) 0))
-       (<= (or (:max-scrap summary) 0) 12)
-       (<= (or (:effective-duplication-score summary) 0) 3)
-       (<= (ratio (or (:zero-assertion-examples summary) 0)
-                  (or (:example-count summary) 0))
-           0.0)
-       (<= (ratio (or (:low-assertion-examples summary) 0)
-                  (or (:example-count summary) 0))
-           0.35)))
+  (let [example-count (or (:example-count summary) 0)
+        zero-assertion-ratio (ratio (or (:zero-assertion-examples summary) 0) example-count)
+        low-assertion-ratio (ratio (or (:low-assertion-examples summary) 0) example-count)]
+    (or (and (<= example-count 2)
+             (<= (or (:max-scrap summary) 0) 10)
+             (<= (or (:effective-duplication-score summary) 0) 1)
+             (zero? (or (:helper-hidden-example-count summary) 0))
+             (<= zero-assertion-ratio 0.0))
+        (and (pos? example-count)
+             (<= (or (:max-scrap summary) 0) 12)
+             (<= (or (:effective-duplication-score summary) 0) 3)
+             (<= zero-assertion-ratio 0.0)
+             (<= low-assertion-ratio 0.35)))))
+
+(defn- size-factor
+  [summary]
+  (let [example-count (or (:example-count summary) 0)]
+    (cond
+      (<= example-count 1) 0.25
+      (<= example-count 2) 0.40
+      (<= example-count 4) 0.65
+      :else 1.0)))
 
 (defn- refactor-pressure-score
   [summary]
-  (+ (* 1.2 (or (:avg-scrap summary) 0))
-     (* 0.6 (or (:max-scrap summary) 0))
-     (* 0.8 (or (:effective-duplication-score summary) 0))
-     (* 20 (ratio (or (:low-assertion-examples summary) 0) (or (:example-count summary) 0)))
-     (* 15 (ratio (or (:branching-examples summary) 0) (or (:example-count summary) 0)))
-     (* 15 (ratio (or (:with-redefs-examples summary) 0) (or (:example-count summary) 0)))
-     (* 8 (ratio (or (:helper-hidden-example-count summary) 0) (or (:example-count summary) 0)))))
+  (let [base (+ (* 1.2 (or (:avg-scrap summary) 0))
+                (* 0.6 (or (:max-scrap summary) 0))
+                (* 0.8 (or (:effective-duplication-score summary) 0))
+                (* 20 (ratio (or (:low-assertion-examples summary) 0) (or (:example-count summary) 0)))
+                (* 15 (ratio (or (:branching-examples summary) 0) (or (:example-count summary) 0)))
+                (* 15 (ratio (or (:with-redefs-examples summary) 0) (or (:example-count summary) 0)))
+                (* 12 (ratio (or (:helper-hidden-example-count summary) 0) (or (:example-count summary) 0))))
+        matrix-credit (* 4 (or (:case-matrix-repetition summary) 0))]
+    (- (* (size-factor summary) base) matrix-credit)))
 
 (defn- pressure-level
   [summary]
@@ -587,41 +627,40 @@
 
 (defn- recommendation-actions
   [summary]
-  (let [example-count (or (:example-count summary) 0)
-        low-assertion-ratio (ratio (or (:low-assertion-examples summary) 0) example-count)
-        zero-assertion-ratio (ratio (or (:zero-assertion-examples summary) 0) example-count)
-        branching-ratio (ratio (or (:branching-examples summary) 0) example-count)
-        mocking-ratio (ratio (or (:with-redefs-examples summary) 0) example-count)
-        harmful-duplication (or (:effective-duplication-score summary) 0)]
-    (->> (cond-> []
-           (stable-summary? summary)
-           (conj (recommendation 3 "No refactor recommended; the file is structurally stable enough to leave alone."))
+  (if (stable-summary? summary)
+    [(recommendation 3 "No refactor recommended; the file is structurally stable enough to leave alone.")]
+    (let [example-count (or (:example-count summary) 0)
+          low-assertion-ratio (ratio (or (:low-assertion-examples summary) 0) example-count)
+          zero-assertion-ratio (ratio (or (:zero-assertion-examples summary) 0) example-count)
+          branching-ratio (ratio (or (:branching-examples summary) 0) example-count)
+          mocking-ratio (ratio (or (:with-redefs-examples summary) 0) example-count)
+          harmful-duplication (or (:effective-duplication-score summary) 0)]
+      (->> (cond-> []
+             (pos? (or (:coverage-matrix-candidates summary) 0))
+             (conj (recommendation 3 "Convert repeated low-complexity examples into table-driven checks; treat this as coverage-matrix repetition, not harmful duplication."))
 
-           (pos? (or (:coverage-matrix-candidates summary) 0))
-           (conj (recommendation 3 "Convert repeated low-complexity examples into table-driven checks; treat this as coverage-matrix repetition, not harmful duplication."))
+             (or (> zero-assertion-ratio 0.0) (> low-assertion-ratio 0.4))
+             (conj (recommendation 3 "Strengthen assertions in weak examples before doing structural cleanup."))
 
-           (or (> zero-assertion-ratio 0.0) (> low-assertion-ratio 0.4))
-           (conj (recommendation 3 "Strengthen assertions in weak examples before doing structural cleanup."))
+             (> (or (:max-scrap summary) 0) 20)
+             (conj (recommendation 3 "Split oversized examples into narrower examples."))
 
-           (> (or (:max-scrap summary) 0) 20)
-           (conj (recommendation 3 "Split oversized examples into narrower examples."))
+             (> harmful-duplication 0)
+             (conj (recommendation 2 "Extract shared setup or repeated assertion scaffolding only where harmful duplication is dominating."))
 
-           (> harmful-duplication 0)
-           (conj (recommendation 2 "Extract shared setup or repeated assertion scaffolding only where harmful duplication is dominating."))
+             (> mocking-ratio 0.3)
+             (conj (recommendation 2 "Reduce mocking and move coverage toward higher-level behaviors."))
 
-           (> mocking-ratio 0.3)
-           (conj (recommendation 2 "Reduce mocking and move coverage toward higher-level behaviors."))
+             (> branching-ratio 0.3)
+             (conj (recommendation 2 "Remove logic from specs or keep variation in explicit data tables rather than control flow."))
 
-           (> branching-ratio 0.3)
-           (conj (recommendation 2 "Remove logic from specs or keep variation in explicit data tables rather than control flow."))
+             (> (or (:helper-hidden-example-count summary) 0) 0)
+             (conj (recommendation 1 "Be skeptical of helper extraction that only hides setup; helper-hidden complexity should still count as complexity."))
 
-           (> (or (:helper-hidden-example-count summary) 0) 0)
-           (conj (recommendation 1 "Be skeptical of helper extraction that only hides setup; helper-hidden complexity should still count as complexity."))
-
-           (> (or (:avg-scrap summary) 0) 12)
-           (conj (recommendation 1 "Consider splitting this file or block by responsibility.")))
-         (sort-by (juxt (comp - :confidence) :text))
-         vec)))
+             (> (or (:avg-scrap summary) 0) 12)
+             (conj (recommendation 1 "Consider splitting this file or block by responsibility.")))
+           (sort-by (juxt (comp - :confidence) :text))
+           vec))))
 
 (defn- guidance
   [{:keys [summary blocks examples]}]
@@ -823,6 +862,11 @@
          (<= (:harmful-duplication-delta comparison) 0)
          (<= (:max-scrap-delta comparison) 0))
     :improved
+
+    (and (pos? (:helper-hidden-delta comparison))
+         (>= (:harmful-duplication-delta comparison) 0)
+         (<= (:case-matrix-delta comparison) 0))
+    :worse
 
     (or (pos? (:harmful-duplication-delta comparison))
         (pos? (:max-scrap-delta comparison))
