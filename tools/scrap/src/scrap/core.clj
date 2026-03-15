@@ -17,6 +17,10 @@
 (def speclj-forms
   #{"describe" "context" "it" "before" "before-all" "after" "with-stubs" "with" "around"})
 
+(def default-top-example-count 5)
+
+(def default-top-block-count 3)
+
 (defn- combine-metrics
   [& metrics]
   (reduce
@@ -346,6 +350,59 @@
                   [(count path) (str/join " / " path)]))
        vec))
 
+(defn- ratio
+  [n d]
+  (if (pos? d) (/ n d) 0.0))
+
+(defn- refactor-pressure-score
+  [summary]
+  (+ (* 1.2 (or (:avg-scrap summary) 0))
+     (* 0.6 (or (:max-scrap summary) 0))
+     (* 0.8 (or (:duplication-score summary) 0))
+     (* 20 (ratio (or (:low-assertion-examples summary) 0) (or (:example-count summary) 0)))
+     (* 15 (ratio (or (:branching-examples summary) 0) (or (:example-count summary) 0)))
+     (* 15 (ratio (or (:with-redefs-examples summary) 0) (or (:example-count summary) 0)))))
+
+(defn- pressure-level
+  [score]
+  (cond
+    (>= score 55) "CRITICAL"
+    (>= score 35) "HIGH"
+    (>= score 18) "MEDIUM"
+    :else "LOW"))
+
+(defn- recommendation-actions
+  [summary]
+  (cond-> []
+    (> (or (:duplication-score summary) 0) 0)
+    (conj "Extract shared setup or arrange scaffolding.")
+
+    (> (ratio (or (:with-redefs-examples summary) 0) (or (:example-count summary) 0)) 0.3)
+    (conj "Reduce mocking and move coverage toward higher-level behaviors.")
+
+    (> (ratio (or (:low-assertion-examples summary) 0) (or (:example-count summary) 0)) 0.4)
+    (conj "Strengthen assertions in weak examples.")
+
+    (> (ratio (or (:branching-examples summary) 0) (or (:example-count summary) 0)) 0.3)
+    (conj "Remove logic from specs or convert variation into table/data-driven checks.")
+
+    (> (or (:max-scrap summary) 0) 20)
+    (conj "Split oversized examples into narrower examples.")
+
+    (> (or (:avg-scrap summary) 0) 12)
+    (conj "Consider splitting this file or block by responsibility.")))
+
+(defn- guidance
+  [{:keys [summary blocks examples]}]
+  (let [file-score (refactor-pressure-score summary)
+        sorted-blocks (sort-by #(refactor-pressure-score (:summary %)) > blocks)
+        sorted-examples (sort-by :scrap > examples)]
+    {:file-score file-score
+     :file-level (pressure-level file-score)
+     :actions (vec (take 4 (distinct (recommendation-actions summary))))
+     :top-blocks (vec (take default-top-block-count sorted-blocks))
+     :top-examples (vec (take default-top-example-count sorted-examples))}))
+
 (defn- process-char [state c next-c]
   (let [{:keys [mode depth line escape skip]} state]
     (cond
@@ -473,6 +530,11 @@
   [path]
   (analyze-source (slurp path) path))
 
+(defn- parse-args
+  [args]
+  {:verbose (boolean (some #{"--verbose"} args))
+   :paths (vec (remove #{"--verbose"} args))})
+
 (defn- spec-file?
   [^java.io.File f]
   (and (.isFile f)
@@ -497,6 +559,69 @@
   (if (seq smells)
     (str/join ", " smells)
     "none"))
+
+(defn- render-guidance-report
+  [{:keys [path summary blocks examples] :as report}]
+  (let [{:keys [file-score file-level actions top-blocks top-examples]} (guidance report)
+        why-section
+        (str "  why:\n"
+             "    avg-scrap: " (format "%.1f" (double (or (:avg-scrap summary) 0.0))) "\n"
+             "    max-scrap: " (or (:max-scrap summary) 0) "\n"
+             "    duplication-score: " (or (:duplication-score summary) 0) "\n"
+             "    low-assertion-ratio: "
+             (format "%.2f" (double (ratio (or (:low-assertion-examples summary) 0)
+                                           (or (:example-count summary) 0))))
+             "\n"
+             "    branching-ratio: "
+             (format "%.2f" (double (ratio (or (:branching-examples summary) 0)
+                                           (or (:example-count summary) 0))))
+             "\n"
+             "    mocking-ratio: "
+             (format "%.2f" (double (ratio (or (:with-redefs-examples summary) 0)
+                                           (or (:example-count summary) 0))))
+             "\n")
+        where-section
+        (when (seq top-blocks)
+          (str "  where:\n"
+               (str/join
+                 "\n"
+                 (for [{:keys [path summary worst-example]} top-blocks]
+                   (str "    "
+                        (str/join " / " path)
+                        " -> "
+                        (pressure-level (refactor-pressure-score summary))
+                        ", avg-scrap "
+                        (format "%.1f" (double (or (:avg-scrap summary) 0.0)))
+                        ", duplication "
+                        (or (:duplication-score summary) 0)
+                        ", worst "
+                        (:name worst-example)
+                        " (SCRAP " (:scrap worst-example) ")")))
+               "\n"))
+        worst-section
+        (when (seq top-examples)
+          (str "  worst-examples:\n"
+               (str/join
+                 "\n"
+                 (for [example top-examples]
+                   (str "    "
+                        (str/join " / " (conj (:describe-path example) (:name example)))
+                        " -> SCRAP " (:scrap example)
+                        (when (seq (:smells example))
+                          (str " [" (format-smells (:smells example)) "]")))))
+               "\n"))
+        how-section
+        (when (seq actions)
+          (str "  how:\n"
+               (str/join "\n" (map #(str "    " %) actions))
+               "\n"))]
+    (str
+      path "\n"
+      "  refactor-pressure: " file-level " (" (format "%.1f" (double file-score)) ")\n"
+      why-section
+      where-section
+      worst-section
+      how-section)))
 
 (defn- render-file-report
   [{:keys [path structure-errors parse-error examples summary blocks]}]
@@ -560,7 +685,7 @@
                     "      smells: " (format-smells (:smells example)))))))))
 
 (defn render-report
-  [file-reports]
+  [file-reports verbose?]
   (let [worst (->> file-reports
                    (mapcat (fn [{:keys [path examples]}]
                              (map #(assoc % :file path) examples)))
@@ -568,7 +693,7 @@
                    (take 10))]
     (str
       "=== SCRAP Report ===\n\n"
-      (str/join "\n\n" (map render-file-report file-reports))
+      (str/join "\n\n" (map (if verbose? render-file-report render-guidance-report) file-reports))
       (when (seq worst)
         (str "\n\nWorst Examples:\n"
              (str/join
@@ -583,9 +708,10 @@
 
 (defn -main
   [& args]
-  (let [files (collect-spec-files args)
+  (let [{:keys [paths verbose]} (parse-args args)
+        files (collect-spec-files paths)
         reports (mapv analyze-file files)
         has-errors? (some #(or (seq (:structure-errors %)) (:parse-error %)) reports)]
-    (println (render-report reports))
+    (println (render-report reports verbose))
     (shutdown-agents)
     (System/exit (if has-errors? 1 0))))

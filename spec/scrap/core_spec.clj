@@ -94,7 +94,7 @@
         (should= [(.toString target)] files)))))
 
 (describe "render-report"
-  (it "includes structure errors and worst examples"
+  (it "renders guidance by default"
     (let [output (scrap/render-report
                    [{:path "spec/foo_spec.clj"
                      :structure-errors ["ERROR line 2: (it) inside (it) at line 1"]
@@ -121,9 +121,46 @@
                                :example-count 1
                                :branching-examples 0
                                :low-assertion-examples 1
-                               :with-redefs-examples 0}}])]
+                               :with-redefs-examples 0}}]
+                   false)]
       (should-contain "SCRAP Report" output)
+      (should-contain "refactor-pressure:" output)
+      (should-contain "why:" output)
+      (should-contain "where:" output)
+      (should-contain "how:" output)
+      (should-contain "Worst Examples" output)
+      (should-contain "math / adds" output)))
+
+  (it "includes full metrics in verbose mode"
+    (let [output (scrap/render-report
+                   [{:path "spec/foo_spec.clj"
+                     :structure-errors ["ERROR line 2: (it) inside (it) at line 1"]
+                     :parse-error nil
+                     :examples [{:describe-path ["math"]
+                                 :name "adds"
+                                 :scrap 9
+                                 :line-count 4
+                                 :assertions 1
+                                 :branches 0
+                                 :setup-depth 0
+                                 :with-redefs 0
+                                 :helper-calls 0
+                                 :smells []}]
+                     :blocks [{:path ["math"]
+                               :summary {:avg-scrap 9.0
+                                         :max-scrap 9
+                                         :example-count 1
+                                         :duplication-score 0}
+                               :worst-example {:name "adds"
+                                               :scrap 9}}]
+                     :summary {:avg-scrap 9.0
+                               :max-scrap 9
+                               :example-count 1
+                               :branching-examples 0
+                               :low-assertion-examples 1
+                               :with-redefs-examples 0}}]
+                   true)]
       (should-contain "structure-errors" output)
       (should-contain "blocks:" output)
-      (should-contain "Worst Examples" output)
-      (should-contain "math / adds" output))))
+      (should-contain "avg-scrap:" output)
+      (should-contain "duplication-score:" output))))
