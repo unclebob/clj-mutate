@@ -122,6 +122,42 @@
   - `WARNING: Found <N> mutations. Consider splitting this module.`
 - Default warning threshold is `50`.
 
+## SCRAP Focus Metrics
+
+For a simple standalone parser aimed at spec-quality analysis, the most practical file-focus metrics are syntactic cohesion measures:
+
+- distinct production vars referenced
+- distinct production namespaces referenced
+- spec-local helper count
+- pairwise symbol overlap between examples
+- pairwise keyword overlap between examples
+- setup-shape diversity
+- `with-redefs` target diversity
+
+These are practical because they can be derived directly from parsed forms without macroexpansion or runtime information.
+
+Less practical for a simple standalone parser are metrics that require semantic interpretation, such as:
+
+- true assertion target dispersion
+- helper purpose spread
+- behavior-mode spread
+- semantic subject detection
+
+## SCRAP Tool
+
+- The repo includes a standalone SCRAP tool under `tools/scrap`.
+- Run it with `clj -M:scrap spec` or pass specific spec files or directories.
+- SCRAP combines:
+  - structural Speclj validation
+  - per-example SCRAP scoring
+  - per-file rollups
+  - a worst-examples report
+- The integrated structural checks include:
+  - `(it)` inside `(it)`
+  - `(describe)` inside `(describe)` or `(context)`
+  - `(before)`, `(with-stubs)`, `(around)`, `(with)`, or `(context)` inside `(it)`
+  - unclosed forms at end of file
+
 ## CLI Constraints
 
 - `--scan` may not be combined with `--update-manifest`, `--lines`, `--since-last-run`, `--mutate-all`, `--timeout-factor`, `--test-command`, or `--max-workers`.

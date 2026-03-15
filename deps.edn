@@ -3,10 +3,12 @@
         org.clojure/tools.reader {:mvn/version "1.4.2"}}
  :aliases {:spec {:main-opts ["-m" "speclj.main" "-c"]
                   :extra-deps {speclj/speclj {:mvn/version "3.10.0"}}
-                  :extra-paths ["spec"]}
+                  :extra-paths ["spec" "tools/scrap/src"]}
            :mutate {:main-opts ["-m" "clj-mutate.core"]
                     :extra-deps {speclj/speclj {:mvn/version "3.10.0"}}
                     :extra-paths ["spec"]}
+           :scrap {:main-opts ["-m" "scrap.core"]
+                   :extra-paths ["tools/scrap/src"]}
            :crap {:extra-deps {io.github.unclebob/crap4clj
                                {:git/url "https://github.com/unclebob/crap4clj.git"
                                 :git/sha "992a5dd41bb337a843c02fb4829a69af7bfcf595"}}

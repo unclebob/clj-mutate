@@ -18,6 +18,9 @@ Requires [Speclj](https://github.com/slagyr/speclj) as your test runner.
 ## Usage
 
 ```bash
+# Analyze spec structure and SCRAP scores
+clj -M:scrap spec
+
 # Mutate-test a source file.
 # If the file already has a footer manifest, this defaults to changed top-level forms only.
 clj -M:mutate src/myapp/foo.cljc
@@ -78,11 +81,14 @@ The tool automatically:
 
 Run mutation testing one file at a time.
 
-Before running specs, run [speclj-structure-check](https://github.com/unclebob/speclj-structure-check). A project can also wire this into its `:spec` alias so structure validation runs before Speclj.
+Before running mutation work, run SCRAP on your specs:
 
 ```bash
+clj -M:scrap spec
 clj -M:spec
 ```
+
+`clj -M:scrap` includes the structural checks that were previously handled by `speclj-structure-check`, and also reports SCRAP scores for the worst examples in each spec file.
 
 If you have specs that should never run from inside mutation workers, tag them `:no-mutate`. `clj-mutate` excludes those by default with `clj -M:spec --tag ~no-mutate`. You can override that behavior with `--test-command`.
 
