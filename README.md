@@ -88,7 +88,7 @@ clj -M:scrap spec
 clj -M:spec
 ```
 
-`clj -M:scrap` includes the structural checks that were previously handled by `speclj-structure-check`, and also reports SCRAP scores for the worst examples in each spec file.
+`clj -M:scrap` includes the structural checks that were previously handled by `speclj-structure-check`, and also reports SCRAP scores for the worst examples in each spec file. The alias pulls SCRAP from [`github.com/unclebob/scrap`](https://github.com/unclebob/scrap).
 
 If you have specs that should never run from inside mutation workers, tag them `:no-mutate`. `clj-mutate` excludes those by default with `clj -M:spec --tag ~no-mutate`. You can override that behavior with `--test-command`.
 

@@ -4,7 +4,7 @@ SCRAP is a proposed structural quality metric for Speclj specs.
 
 The intent is similar to CRAP, but targeted at test code rather than production code. It does not use mutation data. It scores examples based on structural complexity and spec-design smells.
 
-In this repo, SCRAP is implemented as a standalone tool under `tools/scrap` and run with:
+In this repo, SCRAP is consumed from the standalone repo `github.com/unclebob/scrap` and run with:
 
 ```bash
 clj -M:scrap spec

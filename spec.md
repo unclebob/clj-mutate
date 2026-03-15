@@ -145,7 +145,7 @@ Less practical for a simple standalone parser are metrics that require semantic 
 
 ## SCRAP Tool
 
-- The repo includes a standalone SCRAP tool under `tools/scrap`.
+- The repo exposes SCRAP through the `:scrap` alias using the standalone GitHub repo `github.com/unclebob/scrap`.
 - Run it with `clj -M:scrap spec` or pass specific spec files or directories.
 - SCRAP combines:
   - structural Speclj validation
