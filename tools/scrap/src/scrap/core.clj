@@ -322,20 +322,51 @@
                            repeated-literal-examples
                            repeated-arrange-examples)}))
 
+(defn- coverage-matrix-candidate?
+  [example]
+  (and (<= (:scrap example) 14)
+       (<= (:line-count example) 12)
+       (<= (:branches example) 1)
+       (<= (:setup-depth example) 2)
+       (<= (:assertions example) 2)))
+
+(defn- similar-to-any?
+  [example examples key-fn]
+  (let [features (key-fn example)]
+    (and (seq features)
+         (some #(>= (jaccard-similarity features (key-fn %)) duplication-threshold)
+               (remove #{example} examples)))))
+
+(defn- coverage-matrix-count
+  [examples]
+  (count
+    (filter
+      (fn [example]
+        (and (coverage-matrix-candidate? example)
+             (or (similar-to-any? example examples :setup-features)
+                 (similar-to-any? example examples :fixture-features)
+                 (similar-to-any? example examples :arrange-features))))
+      examples)))
+
 (defn- summarize-examples
   [examples]
   (let [total (count examples)
         avg-scrap (if (pos? total)
                     (/ (reduce + (map :scrap examples)) total)
-                    0.0)]
+                    0.0)
+        duplication (summarize-duplication examples)
+        coverage-matrix-candidates (coverage-matrix-count examples)]
     (merge
       {:example-count total
        :avg-scrap avg-scrap
        :max-scrap (if (seq examples) (apply max (map :scrap examples)) 0)
        :branching-examples (count (filter #(pos? (:branches %)) examples))
        :low-assertion-examples (count (filter #(<= (:assertions %) 1) examples))
-       :with-redefs-examples (count (filter #(pos? (:with-redefs %)) examples))}
-      (summarize-duplication examples))))
+       :with-redefs-examples (count (filter #(pos? (:with-redefs %)) examples))
+       :coverage-matrix-candidates coverage-matrix-candidates}
+      duplication
+      {:effective-duplication-score (max 0 (- (:duplication-score duplication)
+                                              coverage-matrix-candidates))})))
 
 (defn- summarize-blocks
   [examples]
@@ -358,7 +389,8 @@
   [summary]
   (+ (* 1.2 (or (:avg-scrap summary) 0))
      (* 0.6 (or (:max-scrap summary) 0))
-     (* 0.8 (or (:duplication-score summary) 0))
+     (* 0.8 (or (:effective-duplication-score summary)
+                (or (:duplication-score summary) 0)))
      (* 20 (ratio (or (:low-assertion-examples summary) 0) (or (:example-count summary) 0)))
      (* 15 (ratio (or (:branching-examples summary) 0) (or (:example-count summary) 0)))
      (* 15 (ratio (or (:with-redefs-examples summary) 0) (or (:example-count summary) 0)))))
@@ -374,6 +406,9 @@
 (defn- recommendation-actions
   [summary]
   (cond-> []
+    (> (or (:coverage-matrix-candidates summary) 0) 0)
+    (conj "Convert repeated low-complexity examples into table-driven checks; treat this as coverage-matrix repetition, not harmful duplication.")
+
     (> (or (:duplication-score summary) 0) 0)
     (conj "Extract shared setup or arrange scaffolding.")
 
@@ -568,6 +603,9 @@
              "    avg-scrap: " (format "%.1f" (double (or (:avg-scrap summary) 0.0))) "\n"
              "    max-scrap: " (or (:max-scrap summary) 0) "\n"
              "    duplication-score: " (or (:duplication-score summary) 0) "\n"
+             "    effective-duplication-score: "
+             (or (:effective-duplication-score summary) (or (:duplication-score summary) 0)) "\n"
+             "    coverage-matrix-candidates: " (or (:coverage-matrix-candidates summary) 0) "\n"
              "    low-assertion-ratio: "
              (format "%.2f" (double (ratio (or (:low-assertion-examples summary) 0)
                                            (or (:example-count summary) 0))))
@@ -592,8 +630,8 @@
                         (pressure-level (refactor-pressure-score summary))
                         ", avg-scrap "
                         (format "%.1f" (double (or (:avg-scrap summary) 0.0)))
-                        ", duplication "
-                        (or (:duplication-score summary) 0)
+                        ", effective duplication "
+                        (or (:effective-duplication-score summary) (or (:duplication-score summary) 0))
                         ", worst "
                         (:name worst-example)
                         " (SCRAP " (:scrap worst-example) ")")))
@@ -640,6 +678,9 @@
            "  low-assertion-examples: " (:low-assertion-examples summary) "/" (:example-count summary) "\n"
            "  with-redefs-examples: " (:with-redefs-examples summary) "/" (:example-count summary) "\n"
            "  duplication-score: " (or (:duplication-score summary) 0) "\n"
+           "  effective-duplication-score: "
+           (or (:effective-duplication-score summary) (or (:duplication-score summary) 0)) "\n"
+           "  coverage-matrix-candidates: " (or (:coverage-matrix-candidates summary) 0) "/" (:example-count summary) "\n"
            "  repeated-setup-examples: " (or (:repeated-setup-examples summary) 0) "/" (:example-count summary) "\n"
            "  repeated-fixture-examples: " (or (:repeated-fixture-examples summary) 0) "/" (:example-count summary) "\n"
            "  repeated-literal-examples: " (or (:repeated-literal-examples summary) 0) "/" (:example-count summary) "\n"
@@ -667,6 +708,9 @@
                     "      avg-scrap: " (format "%.1f" (double (or (:avg-scrap summary) 0.0))) "\n"
                     "      max-scrap: " (:max-scrap summary) "\n"
                     "      duplication-score: " (or (:duplication-score summary) 0) "\n"
+                    "      effective-duplication-score: "
+                    (or (:effective-duplication-score summary) (or (:duplication-score summary) 0)) "\n"
+                    "      coverage-matrix-candidates: " (or (:coverage-matrix-candidates summary) 0) "\n"
                     "      worst-example: " (:name worst-example) " (SCRAP " (:scrap worst-example) ")")))))
     (when (seq examples)
       (str "\n"

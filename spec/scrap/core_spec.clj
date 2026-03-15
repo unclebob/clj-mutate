@@ -81,6 +81,20 @@
       (should (< 0.0 (:avg-arrange-similarity summary)))
       (should (< 0.0 (:duplication-score summary))))))
 
+  (it "classifies repeated low-complexity examples as coverage-matrix candidates"
+    (let [report (scrap/analyze-source
+                   (str "(describe \"matrix\"\n"
+                        "  (it \"first\"\n"
+                        "    (let [result (core/validate-args [\"a\" \"--scan\"])]\n"
+                        "      (should= true (:scan result))))\n"
+                        "  (it \"second\"\n"
+                        "    (let [result (core/validate-args [\"b\" \"--mutate-all\"])]\n"
+                        "      (should= true (:mutate-all result)))))\n")
+                   "spec/matrix_spec.clj")
+          summary (:summary report)]
+      (should= 2 (:coverage-matrix-candidates summary))
+      (should (< (:effective-duplication-score summary) (:duplication-score summary)))))
+
 (describe "collect-spec-files"
   (it "collects spec files from a directory tree"
     (let [root (java.nio.file.Files/createTempDirectory "scrap-specs" (make-array java.nio.file.attribute.FileAttribute 0))
@@ -128,6 +142,7 @@
       (should-contain "why:" output)
       (should-contain "where:" output)
       (should-contain "how:" output)
+      (should-contain "coverage-matrix-candidates:" output)
       (should-contain "Worst Examples" output)
       (should-contain "math / adds" output)))
 
@@ -163,4 +178,5 @@
       (should-contain "structure-errors" output)
       (should-contain "blocks:" output)
       (should-contain "avg-scrap:" output)
-      (should-contain "duplication-score:" output))))
+      (should-contain "duplication-score:" output)
+      (should-contain "coverage-matrix-candidates:" output))))

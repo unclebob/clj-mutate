@@ -113,6 +113,13 @@ With `--verbose`, SCRAP reports the full metric set:
 - per-example metrics
 - a global worst-examples list
 
+SCRAP distinguishes between:
+
+- harmful duplication: repeated setup, fixture, or arrange scaffolding that should usually be extracted or split
+- coverage-matrix repetition: many small, low-complexity examples with similar structure that are often better converted into table-driven checks
+
+That distinction exists so an AI assistant does not misread a block like option parsing or validation matrices as purely bad duplication.
+
 The intended use is to find:
 
 - large examples
@@ -129,3 +136,14 @@ In practice, SCRAP is meant to answer three refactoring questions for an AI assi
 - how the refactor should proceed: split blocks, extract setup, reduce duplication, or simplify oversized examples
 
 The default non-verbose report is optimized around those three questions. `--verbose` is the raw supporting data.
+
+When SCRAP reports `coverage-matrix-candidates`, the intended interpretation for an AI assistant is:
+
+- this repetition may be intentional test coverage
+- prefer consolidating it into table-driven specs
+- do not treat it as strong evidence that the underlying production logic or spec file structure is fundamentally broken
+
+When SCRAP reports high `effective-duplication-score`, the intended interpretation is different:
+
+- repeated scaffolding is dominating the file or block
+- extract setup, extract helpers, or split the block/file
