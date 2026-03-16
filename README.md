@@ -173,6 +173,7 @@ Coverage freshness is checked automatically:
 - If `target/coverage/lcov.info` is missing, `clj-mutate` regenerates it with `clj -M:cov --lcov`.
 - If LCOV is older than current source/spec inputs, `clj-mutate` regenerates it with `clj -M:cov --lcov`.
 - The run prints a diagnostic message when regeneration is triggered.
+- If a mutation site sits on a `recur` argument line or a nested loop-state update expression, LCOV may emit no `DA` entry for that line. In that case `clj-mutate` classifies the site as uncovered even when behavior-level tests exercise the path.
 
 With `--reuse-lcov`:
 - `clj-mutate` uses the existing `target/coverage/lcov.info` as-is
