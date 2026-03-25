@@ -1,3 +1,4 @@
+;; mutation-tested: 2026-03-25
 (ns clj-mutate.workers
   (:require [clj-mutate.project :as project])
   (:import [java.io File]
@@ -65,17 +66,10 @@
       (for [i (range n)]
         (let [dir-path (str base-dir "/worker-" i)]
           (.mkdirs (File. dir-path))
-          (symlink! (str dir-path "/" config)
-                    (str project-root "/" config))
+          (spit (str dir-path "/" config)
+                (slurp (str project-root "/" config)))
           (symlink! (str dir-path "/spec")
                     (str project-root "/spec"))
-          (if bb?
-            (when (.exists (File. (str project-root "/.babashka")))
-              (symlink! (str dir-path "/.babashka")
-                        (str project-root "/.babashka")))
-            (when (.exists (File. (str project-root "/.cpcache")))
-              (symlink! (str dir-path "/.cpcache")
-                        (str project-root "/.cpcache"))))
           (setup-source-overlay! dir-path project-root
                                   source-rel-path original-content)
           dir-path)))))

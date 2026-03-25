@@ -1,5 +1,6 @@
-target/
-.cpcache/
 *.mutation-backup
 .claude/
+.cpcache/
+.idea/
 docs/
+target/

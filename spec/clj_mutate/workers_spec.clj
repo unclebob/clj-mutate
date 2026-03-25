@@ -23,8 +23,10 @@
         (should= 2 (count dirs))
         (doseq [dir dirs]
           (should (.exists (File. dir)))
-          ;; Should have symlink to deps.edn
-          (should (Files/isSymbolicLink (.toPath (File. (str dir "/deps.edn")))))
+          ;; Should have a copy of the project config (not a symlink)
+          (let [config (if (.exists (File. "bb.edn")) "bb.edn" "deps.edn")]
+            (should (.exists (File. (str dir "/" config))))
+            (should-not (Files/isSymbolicLink (.toPath (File. (str dir "/" config))))))
           ;; Should have source file with original content
           (should= original-content (slurp (str dir "/" source-rel))))
         (finally
@@ -41,43 +43,51 @@
         (finally
           (workers/cleanup-worker-dirs! base-dir)))))
 
-  (it "symlinks .cpcache/ if it exists"
-    (let [base-dir "target/test-workers-cpcache"
+  (it "does not symlink cache directories (cached classpaths would bypass source overlay)"
+    (let [base-dir "target/test-workers-cache"
           source-rel "src/myapp/foo.cljc"
           content "(ns myapp.foo)\n"
-          cpcache-dir (File. ".cpcache")]
-      (let [dirs (workers/create-worker-dirs! base-dir source-rel content 1)]
-        (try
-          (let [cp-link (File. (str (first dirs) "/.cpcache"))]
-            (if (.exists cpcache-dir)
-              (should (Files/isSymbolicLink (.toPath cp-link)))
-              (should-not (.exists cp-link))))
-          (finally
-            (workers/cleanup-worker-dirs! base-dir))))))
-
-  (it "creates source overlay with symlinked siblings"
-    (let [base-dir "target/test-workers-overlay"
-          source-rel "src/clj_mutate/core.cljc"
-          content "(ns clj-mutate.core)\n"
           dirs (workers/create-worker-dirs! base-dir source-rel content 1)]
       (try
-        (let [dir (first dirs)
-              src-dir (File. (str dir "/src"))]
-          ;; src/ should be a real directory, not a symlink
-          (should (.isDirectory src-dir))
-          (should-not (Files/isSymbolicLink (.toPath src-dir)))
-          ;; The mutated file should be a real file
-          (should (.isFile (File. (str dir "/" source-rel))))
-          (should-not (Files/isSymbolicLink (.toPath (File. (str dir "/" source-rel)))))
-          (should= content (slurp (str dir "/" source-rel)))
-          ;; Sibling source files should be symlinks
-          (let [siblings (.listFiles (File. (str dir "/src/clj_mutate")))
-                non-mutated (filter #(not= "core.cljc" (.getName %)) siblings)]
-            (should (pos? (count non-mutated)))
-            (doseq [s non-mutated]
-              (should (Files/isSymbolicLink (.toPath s))))))
+        (let [dir (first dirs)]
+          (should-not (.exists (File. (str dir "/.cpcache"))))
+          (should-not (.exists (File. (str dir "/.babashka")))))
         (finally
-          (workers/cleanup-worker-dirs! base-dir))))))
+          (workers/cleanup-worker-dirs! base-dir)))))
+
+  (it "creates source overlay with symlinked siblings"
+    ;; Use a temp directory as the project root to avoid writing through
+    ;; symlinks to real project files during mutation testing
+    (let [base-dir "target/test-workers-overlay"
+          temp-root (str "target/test-overlay-root-" (System/nanoTime))
+          source-rel "src/myns/target.cljc"
+          content "(ns myns.target)\n"]
+      ;; Create a fake project source tree
+      (.mkdirs (File. (str temp-root "/src/myns")))
+      (spit (str temp-root "/src/myns/target.cljc") "(ns myns.target :original)")
+      (spit (str temp-root "/src/myns/sibling_a.cljc") "(ns myns.sibling-a)")
+      (spit (str temp-root "/src/myns/sibling_b.cljc") "(ns myns.sibling-b)")
+      (try
+        (let [worker-path (str base-dir "/worker-0")]
+          (.mkdirs (File. worker-path))
+          (#'workers/setup-source-overlay! worker-path temp-root source-rel content)
+          (let [src-dir (File. (str worker-path "/src"))]
+            ;; src/ should be a real directory, not a symlink
+            (should (.isDirectory src-dir))
+            (should-not (Files/isSymbolicLink (.toPath src-dir)))
+            ;; The target file should be a real file with overlay content
+            (should (.isFile (File. (str worker-path "/" source-rel))))
+            (should-not (Files/isSymbolicLink (.toPath (File. (str worker-path "/" source-rel)))))
+            (should= content (slurp (str worker-path "/" source-rel)))
+            ;; Sibling source files should be symlinks
+            (let [siblings (.listFiles (File. (str worker-path "/src/myns")))
+                  non-target (filter #(not= "target.cljc" (.getName %)) siblings)]
+              (should= 2 (count non-target))
+              (doseq [s non-target]
+                (should (Files/isSymbolicLink (.toPath s)))))))
+        (finally
+          (workers/cleanup-worker-dirs! base-dir)
+          (#'workers/delete-recursive! (File. temp-root)))))))
 
 (describe "cleanup-worker-dirs!"
   (it "removes the base directory and all contents"

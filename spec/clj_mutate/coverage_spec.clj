@@ -64,7 +64,8 @@
       (with-redefs [cov/run-coverage! (fn [] (reset! ran? true)
                                         (spit temp-lcov sample-lcov)
                                         true)
-                    cov/lcov-path (constantly temp-lcov)]
+                    cov/lcov-path (constantly temp-lcov)
+                    clj-mutate.project/bb-project? (constantly false)]
         (java.nio.file.Files/deleteIfExists
           (.toPath (java.io.File. temp-lcov)))
         (with-out-str (reset! result (cov/load-coverage "src/empire/combat.cljc")))
