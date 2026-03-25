@@ -31,7 +31,7 @@ Optional coverage integration (skips mutations on uncovered lines):
 ```clojure
 :cov {:main-opts ["-m" "speclj.cloverage" "--" "-p" "src" "-s" "spec" "--lcov"]
       :extra-deps {cloverage/cloverage {:mvn/version "1.2.4"}
-                   speclj/speclj {:mvn/version "3.12.1"}}
+                   speclj/speclj {:mvn/version "3.12.2"}}
       :extra-paths ["spec"]}
 ```
 
@@ -43,16 +43,16 @@ Add `mutate` and `spec` tasks to your project's `bb.edn`:
 {:paths ["src" "spec"]
  :deps {clj-mutate/clj-mutate {:local/root "/path/to/clj-mutate"}
         org.clojure/tools.reader {:mvn/version "1.4.2"}
-        speclj/speclj {:mvn/version "3.12.1"}}
+        speclj/speclj {:mvn/version "3.12.2"}}
  :tasks {spec {:doc "Run all specs"
-               :requires ([speclj.cli :as speclj])
-               :task (System/exit (speclj/run "-c"))}
+               :requires ([speclj.main :as speclj])
+               :task (speclj/-main "-c")}
          mutate {:doc "Run mutation testing"
                  :requires ([clj-mutate.core :as mutate])
                  :task (apply mutate/-main *command-line-args*)}}}
 ```
 
-**Important: the `spec` task must propagate the exit code.** clj-mutate detects killed mutants by checking whether `bb spec` exits non-zero. Babashka's task runner intercepts `System/exit` calls from libraries, so `speclj.main/-main` (which calls `System/exit` internally) will NOT propagate the failure exit code — bb always exits 0. The fix is to call `speclj.cli/run` (which returns the failure count as an integer) and pass it to `System/exit` explicitly.
+**Important: use speclj 3.12.2+.** clj-mutate detects killed mutants by checking whether `bb spec` exits non-zero. Speclj 3.12.2 correctly propagates exit codes under babashka via `{:babashka/exit N}`. Earlier versions call `System/exit` which bb's task runner intercepts, causing bb to always exit 0 — making all mutants appear to survive.
 
 Requires a `spec` task that runs all specs. Cloverage is not available under babashka; coverage-guided filtering is skipped (all lines are mutation-tested). If an `lcov.info` file is present from an external source, it will be used.
 
@@ -124,4 +124,4 @@ Known-equivalent mutations are auto-suppressed to reduce false survivors:
 - **Specs fail at baseline**: Fix your specs before mutation testing
 - **Chasing equivalent mutations**: Some survivors are mathematically equivalent; suppress them rather than writing impossible tests
 - **Missing coverage in bb projects**: Cloverage is JVM-only. Babashka projects test all lines by default, which is slower but thorough
-- **All mutants survive in bb projects**: The `spec` task must call `(System/exit (speclj.cli/run "-c"))`, not `(speclj.main/-main "-c")`. Babashka intercepts `System/exit` from library code, so `-main`'s internal exit call is swallowed and bb always exits 0. clj-mutate relies on exit codes to detect killed mutants.
+- **All mutants survive in bb projects**: Requires speclj 3.12.2+ which propagates exit codes correctly under babashka. Earlier versions always exit 0 regardless of failures, so clj-mutate can't detect killed mutants.
