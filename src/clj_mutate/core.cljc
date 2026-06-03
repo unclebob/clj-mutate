@@ -50,7 +50,7 @@
         worker-dirs (workers/create-worker-dirs!
                       run-base-dir source-path original-content n-workers)
         queue (java.util.concurrent.LinkedBlockingQueue. ^java.util.Collection (vec sites))
-        results (java.util.concurrent.ConcurrentLinkedQueue.)
+        results (atom [])
         counter (atom 0)
         total (count sites)
         lock (Object.)
@@ -63,14 +63,14 @@
                                                           original-content site timeout-ms
                                                           test-command)
                                 n (swap! counter inc)]
-                            (.add results r)
+                            (swap! results conj r)
                             (locking lock
                               (print-progress (dec n) total r site))
                             (recur))))))
                   worker-dirs)]
     (try
       (run! deref futures)
-      (vec (sort-by #(:index (:site %)) results))
+      (vec (sort-by #(:index (:site %)) @results))
       (finally
         (workers/cleanup-worker-dirs! run-base-dir)))))
 

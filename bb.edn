@@ -1,0 +1,4 @@
+{:paths ["src"]
+ :tasks {mutate {:doc "Run clj-mutate"
+                 :requires ([clj-mutate.core :as core])
+                 :task (apply core/-main *command-line-args*)}}}

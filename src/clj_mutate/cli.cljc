@@ -7,6 +7,7 @@
 (def usage-summary
   (str
     "Usage: clj -M:mutate <source-file.cljc> [options]\n"
+    "   or: bb mutate <source-file.cljc> [options]\n"
     "\n"
     "Options:\n"
     "  --scan                Report mutation counts without running tests or coverage\n"

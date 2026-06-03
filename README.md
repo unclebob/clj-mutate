@@ -4,7 +4,20 @@ Mutation testing for Clojure. Discovers mutation sites, applies each one, runs y
 
 ## Setup
 
-Add a `:mutate` alias to your project's `deps.edn`:
+Use either a Babashka `bb.edn` task or a normal Clojure `deps.edn` alias.
+Babashka is recommended for day-to-day use because it starts much faster and avoids JVM startup overhead in the `clj-mutate` launcher.
+The `clj` launcher remains fully supported and is useful as a compatibility fallback when debugging runtime-specific behavior.
+
+For Babashka, add a `mutate` task to your project's `bb.edn`:
+
+```clojure
+{:paths ["src" "/path/to/clj-mutate/src"]
+ :tasks {mutate {:doc "Run clj-mutate"
+                 :requires ([clj-mutate.core :as core])
+                 :task (apply core/-main *command-line-args*)}}}
+```
+
+For normal Clojure, add a `:mutate` alias to your project's `deps.edn`:
 
 ```clojure
 :mutate {:main-opts ["-m" "clj-mutate.core"]
@@ -16,6 +29,13 @@ Add a `:mutate` alias to your project's `deps.edn`:
 Requires [Speclj](https://github.com/slagyr/speclj) as your test runner.
 
 ## Usage
+
+Both launchers accept the same options:
+
+```bash
+clj -M:mutate src/myapp/foo.cljc --scan
+bb mutate src/myapp/foo.cljc --scan
+```
 
 ```bash
 # Analyze spec structure and SCRAP scores
@@ -57,6 +77,7 @@ clj -M:mutate src/myapp/foo.cljc --test-command "clj -M:spec --tag ~slow"
 
 # Show command usage help
 clj -M:mutate --help
+bb mutate --help
 ```
 
 The tool automatically:
