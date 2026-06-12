@@ -58,7 +58,17 @@
           sites (core/discover-all-mutations forms)
           plus-site (first (filter #(= (:original %) '+) sites))
           result (core/mutate-source-text src plus-site)]
-      (should (.endsWith result "\n")))))
+      (should (.endsWith result "\n"))))
+
+  (it "fails clearly when a mutation site has no source line"
+    (let [src "(def opts {:pretty true})\n"
+          site {:original true
+                :mutant false
+                :line nil
+                :column nil
+                :description "true -> false"}]
+      (should-throw clojure.lang.ExceptionInfo
+                    (core/mutate-source-text src site)))))
 
 (describe "mutate-and-test"
   (it "writes mutated file, runs specs, restores original"

@@ -110,6 +110,14 @@
           one-site (first (filter #(= (:original %) 1) sites))]
       (should-not-be-nil (:line one-site))))
 
+  (it "inherits the nearest ancestor source location when parent metadata is absent"
+    (let [form (with-meta (list 'def 'opts {:pretty true})
+                 {:line 42 :column 1})
+          sites (m/find-mutations form)
+          true-site (first (filter #(= (:original %) true) sites))]
+      (should= 42 (:line true-site))
+      (should= 1 (:column true-site))))
+
   (it "returns nil :line for forms without metadata"
     (let [form (list (symbol "+") 1 2)
           sites (m/find-mutations form)

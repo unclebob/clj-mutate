@@ -48,7 +48,11 @@
 (defn mutate-source-text
   [original-content site]
   (let [lines (str/split original-content #"\n" -1)
-        line-idx (dec (:line site))
+        line-number (:line site)
+        _ (when-not line-number
+            (throw (ex-info "Mutation site has no source line"
+                            {:site site})))
+        line-idx (dec line-number)
         line (nth lines line-idx)
         pat (token-pattern (:original site))
         col (:column site)

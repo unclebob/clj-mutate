@@ -91,28 +91,23 @@
 (defn- first-matching-rule [context node]
   (first (filter #(matches-rule? % context node) rules)))
 
-(defn- node-line
-  "Extract line number for a mutation site.
-   Symbols get reader metadata; literals use parent's metadata."
-  [parent node]
-  (or (-> node meta :line)
-      (-> parent meta :line)))
-
-(defn- node-column
-  "Extract column number for a mutation site.
-   Symbols get reader metadata; literals use parent's metadata."
-  [parent node]
-  (or (-> node meta :column)
-      (-> parent meta :column)))
+(defn- source-location
+  [x]
+  (when-let [m (meta x)]
+    (when-let [line (:line m)]
+      {:line line
+       :column (:column m)})))
 
 (defn- walk-children
   "Recurse into child nodes of any collection type."
-  [walk-fn grandparent parent node]
+  [walk-fn parent node nearest-location]
   (cond
-    (seq? node) (doseq [child node] (walk-fn parent node child))
-    (vector? node) (doseq [child node] (walk-fn parent node child))
-    (map? node) (doseq [[k v] node] (walk-fn parent node k) (walk-fn parent node v))
-    (set? node) (doseq [child node] (walk-fn parent node child))))
+    (seq? node) (doseq [child node] (walk-fn parent node child nearest-location))
+    (vector? node) (doseq [child node] (walk-fn parent node child nearest-location))
+    (map? node) (doseq [[k v] node]
+                  (walk-fn parent node k nearest-location)
+                  (walk-fn parent node v nearest-location))
+    (set? node) (doseq [child node] (walk-fn parent node child nearest-location))))
 
 (defn find-mutations
   "Walk form tree, return vector of mutation sites.
@@ -123,19 +118,22 @@
   [form]
   (let [counter (atom 0)
         sites (atom [])]
-    (letfn [(walk [grandparent parent node]
-              (let [context {:parent parent :grandparent grandparent}]
+    (letfn [(walk [grandparent parent node nearest-location]
+              (let [site-location (or (source-location node)
+                                      (source-location parent)
+                                      nearest-location)
+                    context {:parent parent :grandparent grandparent}]
                 (when-let [rule (first-matching-rule context node)]
                   (swap! sites conj {:index @counter
                                      :original (:original rule)
                                      :mutant (:mutant rule)
                                      :category (:category rule)
-                                     :line (node-line parent node)
-                                     :column (node-column parent node)
+                                     :line (:line site-location)
+                                     :column (:column site-location)
                                      :description (str (:original rule) " -> " (:mutant rule))})
                   (swap! counter inc))
-                (walk-children walk grandparent parent node)))]
-      (walk nil nil form))
+                (walk-children walk parent node site-location)))]
+      (walk nil nil form nil))
     @sites))
 
 (defn- rebuild-coll
