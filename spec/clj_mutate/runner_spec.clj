@@ -1,5 +1,6 @@
 (ns clj-mutate.runner-spec
   (:require [speclj.core :refer :all]
+            [clj-mutate.project :as project]
             [clj-mutate.runner :as runner])
   (:import [java.io File]))
 
@@ -35,7 +36,7 @@
 
 (describe "command->argv"
   (it "falls back to the default command when input is blank"
-    (should= ["clj" "-M:spec" "--tag" "~no-mutate"] (#'runner/command->argv "   ")))
+    (should= (project/spec-command) (#'runner/command->argv "   ")))
 
   (it "splits a non-blank command on whitespace"
     (should= ["clj" "-M:all-tests"] (#'runner/command->argv "clj   -M:all-tests"))))

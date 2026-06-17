@@ -3,10 +3,10 @@
         org.clojure/data.json {:mvn/version "2.5.1"}
         org.clojure/tools.reader {:mvn/version "1.4.2"}}
  :aliases {:spec {:main-opts ["-m" "speclj.main" "-c"]
-                  :extra-deps {speclj/speclj {:mvn/version "3.10.0"}}
+                  :extra-deps {speclj/speclj {:mvn/version "3.12.2"}}
                   :extra-paths ["spec"]}
            :mutate {:main-opts ["-m" "clj-mutate.core"]
-                    :extra-deps {speclj/speclj {:mvn/version "3.10.0"}}
+                    :extra-deps {speclj/speclj {:mvn/version "3.12.2"}}
                     :extra-paths ["spec"]}
            :scrap {:main-opts ["-m" "scrap.core"]
                    :extra-deps {io.github.unclebob/scrap
@@ -18,5 +18,5 @@
                   :main-opts ["-m" "crap4clj.core"]}
            :cov {:main-opts ["-m" "speclj.cloverage" "--" "-p" "src" "-s" "spec" "--lcov"]
                  :extra-deps {cloverage/cloverage {:mvn/version "1.2.4"}
-                              speclj/speclj {:mvn/version "3.10.0"}}
+                              speclj/speclj {:mvn/version "3.12.2"}}
                  :extra-paths ["spec"]}}}

@@ -1,8 +1,11 @@
 (ns clj-mutate.runner
-  (:require [clojure.string :as str])
+  (:require [clojure.string :as str]
+            [clj-mutate.project :as project])
   (:import [java.util.concurrent TimeUnit]))
 
-(def ^:private default-test-command "clj -M:spec --tag ~no-mutate")
+(defn- default-test-command
+  []
+  (project/default-test-command))
 
 (defn- command->argv
   [command]
@@ -11,7 +14,7 @@
                   vec)]
     (if (seq argv)
       argv
-      (str/split default-test-command #"\s+"))))
+      (str/split (default-test-command) #"\s+"))))
 
 (defn- create-process-builder
   [test-command]
@@ -63,9 +66,9 @@
    Optional dir: run specs in the given directory.
    Optional test-command: shell-like command string (split on whitespace).
    A timeout indicates an infinite loop — treated as :killed by caller."
-  ([] (run-specs nil nil default-test-command))
-  ([timeout-ms] (run-specs timeout-ms nil default-test-command))
-  ([timeout-ms dir] (run-specs timeout-ms dir default-test-command))
+  ([] (run-specs nil nil (default-test-command)))
+  ([timeout-ms] (run-specs timeout-ms nil (default-test-command)))
+  ([timeout-ms dir] (run-specs timeout-ms dir (default-test-command)))
   ([timeout-ms dir test-command]
    (let [process (start-process dir test-command)
          _ (start-output-drainer! process)
@@ -80,7 +83,7 @@
 (defn run-specs-timed
   "Run all specs without timeout. Returns {:result :killed/:survived :elapsed-ms N}."
   ([]
-   (run-specs-timed default-test-command))
+   (run-specs-timed (default-test-command)))
   ([test-command]
   (let [start (current-time-ms)
         result (run-specs nil nil test-command)

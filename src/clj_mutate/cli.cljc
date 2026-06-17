@@ -1,8 +1,11 @@
 (ns clj-mutate.cli
-  (:require [clojure.string :as str])
+  (:require [clojure.string :as str]
+            [clj-mutate.project :as project])
   (:import [java.io File]))
 
-(def default-test-command "clj -M:spec --tag ~no-mutate")
+(defn default-test-command
+  []
+  (project/default-test-command))
 
 (def usage-summary
   (str
@@ -18,7 +21,7 @@
     "  --mutate-all           Run all covered mutations even if a manifest exists\n"
     "  --mutation-warning N   Warn when more than N mutations are found (default 50)\n"
     "  --timeout-factor N     Mutation timeout multiplier vs baseline (default 10)\n"
-    "  --test-command CMD     Test command to run (default \"clj -M:spec --tag ~no-mutate\")\n"
+    "  --test-command CMD     Test command to run (default: bb spec or clj -M:spec --tag ~no-mutate)\n"
     "  --max-workers N        Limit parallel workers to N (positive integer)\n"
     "  --help                 Print this help and exit\n"))
 
@@ -32,8 +35,12 @@
    :mutate-all false
    :mutation-warning 50
    :timeout-factor 10
-   :test-command default-test-command
+   :test-command nil
    :max-workers nil})
+
+(defn- initial-options
+  []
+  (assoc default-options :test-command (default-test-command)))
 
 (defn- parse-lines
   [value]
@@ -114,7 +121,7 @@
     (= "--scan" arg)
     (if (or (:update-manifest options) (:lines options) (:since-last-run options) (:mutate-all options)
             (not= 10 (:timeout-factor options))
-            (not= default-test-command (:test-command options))
+            (not= (default-test-command) (:test-command options))
             (:max-workers options))
       [rest-args (usage-error "Cannot combine --scan with --update-manifest or mutation execution options.")]
       [rest-args (assoc options :scan true)])
@@ -122,7 +129,7 @@
     (= "--update-manifest" arg)
     (if (or (:scan options) (:lines options) (:since-last-run options) (:mutate-all options)
             (not= 10 (:timeout-factor options))
-            (not= default-test-command (:test-command options))
+            (not= (default-test-command) (:test-command options))
             (:max-workers options))
       [rest-args (usage-error "Cannot combine --update-manifest with --scan or mutation execution options.")]
       [rest-args (assoc options :update-manifest true)])
@@ -159,7 +166,7 @@
   (if (some #{"--help"} args)
     {:help true :usage usage-summary}
     (loop [[arg & rest-args] args
-           options default-options]
+           options (initial-options)]
       (if (nil? arg)
         (ensure-source-path options)
         (let [[remaining updated-options] (consume-option options arg rest-args)]

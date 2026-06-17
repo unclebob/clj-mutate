@@ -107,8 +107,8 @@
     (println (str "Updated manifest: " source-path))))
 
 (defn run-mutation-testing
-  ([source-path] (run-mutation-testing source-path nil 10 cli/default-test-command nil false false 50 false))
-  ([source-path lines] (run-mutation-testing source-path lines 10 cli/default-test-command nil false false 50 false))
+  ([source-path] (run-mutation-testing source-path nil 10 (cli/default-test-command) nil false false 50 false))
+  ([source-path lines] (run-mutation-testing source-path lines 10 (cli/default-test-command) nil false false 50 false))
   ([source-path lines timeout-factor test-command max-workers]
    (run-mutation-testing source-path lines timeout-factor test-command max-workers false false 50 false))
   ([source-path lines timeout-factor test-command max-workers since-last-run]

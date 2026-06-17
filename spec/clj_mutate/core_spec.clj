@@ -1,8 +1,10 @@
 (ns clj-mutate.core-spec
   (:require [speclj.core :refer :all]
+            [clj-mutate.cli :as cli]
             [clj-mutate.core :as core]
             [clj-mutate.coverage :as coverage]
             [clj-mutate.manifest :as manifest]
+            [clj-mutate.project :as project]
             [clj-mutate.runner :as runner]
             [clj-mutate.workers :as workers]))
 
@@ -131,7 +133,7 @@
                 [[[temp-source-path]
                   [#(should= temp-source-path (:source-path %))
                    #(should= 10 (:timeout-factor %))
-                   #(should= "clj -M:spec --tag ~no-mutate" (:test-command %))
+                   #(should= (project/default-test-command) (:test-command %))
                    #(should= false (:since-last-run %))
                    #(should= false (:mutate-all %))
                    #(should= 50 (:mutation-warning %))
@@ -316,13 +318,13 @@
       (spit temp-path original)
       (with-redefs [runner/run-specs (fn [& _] :killed)
                     runner/run-specs-timed (fn [cmd]
-                                             (should= "clj -M:spec --tag ~no-mutate" cmd)
+                                             (should= (cli/default-test-command) cmd)
                                              {:result :survived :elapsed-ms 100})
                     coverage/load-coverage (fn [& _] nil)
                     core/run-mutations-parallel
                     (fn [sites source-path content timeout-ms max-workers test-command]
                       (should= nil max-workers)
-                      (should= "clj -M:spec --tag ~no-mutate" test-command)
+                      (should= (cli/default-test-command) test-command)
                       (doall (map (fn [site]
                                     (core/mutate-and-test source-path content nil site timeout-ms test-command))
                                   sites)))]
@@ -347,13 +349,13 @@
       (spit temp-path original)
       (with-redefs [runner/run-specs (fn [& _] :killed)
                     runner/run-specs-timed (fn [cmd]
-                                             (should= "clj -M:spec --tag ~no-mutate" cmd)
+                                             (should= (cli/default-test-command) cmd)
                                              {:result :survived :elapsed-ms 100})
                     coverage/load-coverage (fn [& _] nil)
                     core/run-mutations-parallel
                     (fn [sites source-path content timeout-ms max-workers test-command]
                       (should= nil max-workers)
-                      (should= "clj -M:spec --tag ~no-mutate" test-command)
+                      (should= (cli/default-test-command) test-command)
                       (doall (map (fn [site]
                                     (core/mutate-and-test source-path content nil site timeout-ms test-command))
                                   sites)))]
@@ -746,12 +748,13 @@
       (spit temp-path original)
       (with-redefs [runner/run-specs (fn [& _] :survived)
                     runner/run-specs-timed (fn [cmd]
-                                             (should= "clj -M:spec --tag ~no-mutate" cmd)
+                                             (should= (cli/default-test-command) cmd)
                                              {:result :survived :elapsed-ms 100})
                     coverage/load-coverage (fn [& _] nil)
                     core/run-mutations-parallel
                     (fn [sites source-path content timeout-ms max-workers test-command]
                       (should= nil max-workers)
+                      (should= (cli/default-test-command) test-command)
                       (let [results (doall (map-indexed
                                              (fn [i site]
                                                (let [r (core/mutate-and-test source-path content nil site timeout-ms test-command)]
