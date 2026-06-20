@@ -157,6 +157,7 @@
                  [[temp-source-path "--max-workers" "3"]
                   [#(should= 3 (:max-workers %))]]]]
           (let [result (core/validate-args args)]
+            (should (seq assertions))
             (doseq [assertion assertions]
               (assertion result)))))))
 

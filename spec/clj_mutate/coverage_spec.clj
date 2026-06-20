@@ -34,6 +34,7 @@
              ["SF:foo.cljc\nDA:1,1\nDA:2,0\nend_of_record\nDA:9,7\n"
               [#(should= #{1} (get % "foo.cljc"))]]]]
       (let [result (cov/parse-lcov lcov-text)]
+        (should (seq assertions))
         (doseq [assertion assertions]
           (assertion result))))))
 

@@ -3,6 +3,12 @@
             [clj-mutate.mutations :as m]
             [clj-mutate.core :as core]))
 
+(defn site-pairs [sites]
+  (set (map (juxt :original :mutant) sites)))
+
+(defn has-site? [original mutant sites]
+  (contains? (site-pairs sites) [original mutant]))
+
 (describe "mutation-rules"
   (it "contains the core mutation set"
     (should (seq m/rules))
@@ -48,54 +54,60 @@
              ['(if (<= (rand) 0.5) :a :b) '<= '<]
              ['(if (> (rand) 0.5) :a :b) '> '>=]]]
       (let [sites (m/find-mutations form)]
-        (should-not (some #(and (= (:original %) original) (= (:mutant %) mutant)) sites)))))
+        (should= #{['if 'if-not]} (site-pairs sites))
+        (should-not (has-site? original mutant sites)))))
 
   (it "does not suppress non-rand comparison mutations"
     (doseq [[form original mutant]
             [['(if (< x 10) :a :b) '< '<=]
              ['(if (> hits 0) :a :b) '> '>=]]]
       (let [sites (m/find-mutations form)]
-        (should (some #(and (= (:original %) original) (= (:mutant %) mutant)) sites))))))
+        (should (has-site? original mutant sites))))))
 
 (describe "rand-nth guard suppression"
   (it "suppresses mutations inside the rand-nth single-element guard"
-    (doseq [[original mutant]
-            [['= 'not=]
-             ['if 'if-not]
-             [1 0]]]
-      (let [sites (m/find-mutations '(if (= 1 (count v)) (first v) (rand-nth v)))]
-        (should-not (some #(and (= (:original %) original) (= (:mutant %) mutant)) sites)))))
+    (let [suppressed-sites (m/find-mutations '(if (= 1 (count v)) (first v) (rand-nth v)))]
+      (doseq [[control-form original mutant]
+              [['(if (= 1 x) :a :b) '= 'not=]
+               ['(if (> x 0) (first v) (rand-nth v)) 'if 'if-not]
+               ['(if (= 1 x) :a :b) 1 0]]]
+        (let [control-sites (m/find-mutations control-form)]
+          (should (has-site? original mutant control-sites))
+          (should-not (has-site? original mutant suppressed-sites))))))
 
   (it "does not suppress mutations outside the rand-nth guard"
     (doseq [[form original mutant]
             [['(if (= 1 x) :a :b) '= 'not=]
              ['(if (> x 0) :a :b) 'if 'if-not]]]
       (let [sites (m/find-mutations form)]
-        (should (some #(and (= (:original %) original) (= (:mutant %) mutant)) sites))))))
+        (should (has-site? original mutant sites))))))
 
 (describe "rand-nth literal pool suppression"
   (it "suppresses literal-pool mutations inside rand-nth"
-    (doseq [[form original mutant]
-            [['(rand-nth [0 1]) 0 1]
-             ['(rand-nth [0 1]) 1 0]
-             ['(rand-nth [[-1 0] [1 0]]) 0 1]]]
-      (let [sites (m/find-mutations form)]
-        (should-not (some #(and (= (:original %) original) (= (:mutant %) mutant)) sites)))))
+    (doseq [[suppressed-form control-form original mutant]
+            [['(rand-nth [0 1]) [0 1] 0 1]
+             ['(rand-nth [0 1]) [0 1] 1 0]
+             ['(rand-nth [[-1 0] [1 0]]) '(vector [-1 0] [1 0]) 0 1]]]
+      (let [suppressed-sites (m/find-mutations suppressed-form)
+            control-sites (m/find-mutations control-form)]
+        (should (has-site? original mutant control-sites))
+        (should-not (has-site? original mutant suppressed-sites)))))
 
   (it "does not suppress literal-pool mutations outside rand-nth"
     (doseq [form ['(+ x 0)
                   '(let [x 0] (+ x 1))]]
       (let [sites (m/find-mutations form)]
-        (should (some #(and (= (:original %) 0) (= (:mutant %) 1)) sites))))))
+        (should (has-site? 0 1 sites))))))
 
 (describe "subvec trim boundary suppression"
   (it "suppresses > -> >= inside (if (> (count v) 10) (subvec ...))"
     (let [sites (m/find-mutations '(if (> (count v) 10) (subvec v 0 10) v))]
-      (should-not (some #(and (= (:original %) '>) (= (:mutant %) '>=)) sites))))
+      (should (has-site? 'if 'if-not sites))
+      (should-not (has-site? '> '>= sites))))
 
   (it "does not suppress > -> >= in non-subvec contexts"
     (let [sites (m/find-mutations '(if (> x 10) :a :b))]
-      (should (some #(and (= (:original %) '>) (= (:mutant %) '>=)) sites)))))
+      (should (has-site? '> '>= sites)))))
 
 (describe "line numbers"
   (it "attaches :line from reader metadata for symbols"

@@ -16,6 +16,10 @@
                                {:git/url "https://github.com/unclebob/crap4clj.git"
                                 :git/sha "992a5dd41bb337a843c02fb4829a69af7bfcf595"}}
                   :main-opts ["-m" "crap4clj.core"]}
+           :deintroverter {:extra-deps {io.github.unclebob/deintroverter4clj
+                                         {:git/url "https://github.com/unclebob/deintroverter4clj.git"
+                                          :git/sha "fe3e8be4d39adfb8dadd3e0de999e1cd815183a2"}}
+                           :main-opts ["-m" "deintroverter.core"]}
            :cov {:main-opts ["-m" "speclj.cloverage" "--" "-p" "src" "-s" "spec" "--lcov"]
                  :extra-deps {cloverage/cloverage {:mvn/version "1.2.4"}
                               speclj/speclj {:mvn/version "3.12.2"}}
