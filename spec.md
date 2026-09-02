@@ -120,7 +120,7 @@
   - summary with killed/survived counts
 - When total discovered mutations exceed `--mutation-warning`, the tool prints:
   - `WARNING: Found <N> mutations. Consider splitting this module.`
-- Default warning threshold is `50`.
+- Default warning threshold is `100`.
 
 ## SCRAP Focus Metrics
 

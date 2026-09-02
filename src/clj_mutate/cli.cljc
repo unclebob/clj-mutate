@@ -19,7 +19,7 @@
     "  --lines L1,L2,...      Run only mutations on these source lines\n"
     "  --since-last-run       Run only mutations in changed top-level forms since last successful run\n"
     "  --mutate-all           Run all covered mutations even if a manifest exists\n"
-    "  --mutation-warning N   Warn when more than N mutations are found (default 50)\n"
+    "  --mutation-warning N   Warn when more than N mutations are found (default 100)\n"
     "  --timeout-factor N     Mutation timeout multiplier vs baseline (default 10)\n"
     "  --test-command CMD     Test command to run (default: bb spec or clj -M:spec --tag ~no-mutate)\n"
     "  --max-workers N        Limit parallel workers to N (positive integer)\n"
@@ -33,7 +33,7 @@
    :lines nil
    :since-last-run false
    :mutate-all false
-   :mutation-warning 50
+   :mutation-warning 100
    :timeout-factor 10
    :test-command nil
    :max-workers nil})

@@ -136,7 +136,7 @@
                    #(should= (project/default-test-command) (:test-command %))
                    #(should= false (:since-last-run %))
                    #(should= false (:mutate-all %))
-                   #(should= 50 (:mutation-warning %))
+                   #(should= 100 (:mutation-warning %))
                    #(should= nil (:max-workers %))]]
                  [[temp-source-path "--since-last-run"]
                   [#(should= true (:since-last-run %))]]

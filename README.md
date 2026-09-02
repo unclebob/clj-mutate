@@ -87,7 +87,7 @@ The tool automatically:
 - Writes an embedded footer manifest with the last test date and top-level form hashes
 - Updates that embedded manifest after successful differential runs as well as full runs
 - Defaults to differential mutation when that footer manifest is already present
-- Prints a warning when mutation count exceeds `--mutation-warning` (default `50`)
+- Prints a warning when mutation count exceeds `--mutation-warning` (default `100`)
 - Excludes specs tagged `:no-mutate` by default so mutation workers do not recursively launch nested mutation runs
 - Can reuse existing LCOV data with `--reuse-lcov`
 
@@ -119,7 +119,7 @@ After specs pass, run `--scan` on the files you changed:
 clj -M:mutate src/myapp/foo.cljc --scan
 ```
 
-If a changed file reports more than `50` mutation sites, consider splitting it before doing full mutation work.
+If a changed file reports more than `100` mutation sites, consider splitting it before doing full mutation work.
 
 Then mutate exactly one source file with `--max-workers 3`:
 
