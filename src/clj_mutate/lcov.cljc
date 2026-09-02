@@ -40,3 +40,7 @@
   (or (get lcov-map source-path)
       (some (fn [[k v]] (when (str/ends-with? k source-path) v))
             lcov-map)))
+
+;; clj-mutate-manifest-begin
+;; {:version 1, :tested-at "2026-09-02T15:14:42.007173-05:00", :module-hash "1019752058", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line nil, :hash "-1034700927"} {:id "defn-/parse-data-line", :kind "defn-", :line 4, :end-line nil, :hash "1753012357"} {:id "defn-/apply-lcov-line", :kind "defn-", :line 9, :end-line nil, :hash "1226843982"} {:id "defn/parse-lcov", :kind "defn", :line 28, :end-line nil, :hash "-1778570802"} {:id "defn/covered-lines", :kind "defn", :line 36, :end-line nil, :hash "-1062448005"}]}
+;; clj-mutate-manifest-end

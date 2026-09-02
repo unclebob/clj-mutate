@@ -144,3 +144,7 @@
              (spit source-path manifest-content))
            (finally
              (backup/cleanup-backup! source-path))))))))
+
+;; clj-mutate-manifest-begin
+;; {:version 1, :tested-at "2026-09-02T15:18:25.990555-05:00", :module-hash "-887927905", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line nil, :hash "1654870243"} {:id "defn/mutation-run-context", :kind "defn", :line 12, :end-line nil, :hash "-1469696740"} {:id "defn/scan-mutation-sites", :kind "defn", :line 60, :end-line nil, :hash "792242941"} {:id "defn/run-mutation-suite", :kind "defn", :line 71, :end-line nil, :hash "-1773928310"} {:id "defn/with-baseline", :kind "defn", :line 77, :end-line nil, :hash "1734598447"} {:id "defn/update-manifest!", :kind "defn", :line 88, :end-line nil, :hash "-685529017"} {:id "defn/run-mutation-testing", :kind "defn", :line 101, :end-line nil, :hash "1839474640"}]}
+;; clj-mutate-manifest-end

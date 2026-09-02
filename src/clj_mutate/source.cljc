@@ -67,5 +67,5 @@
     (str/join "\n" new-lines)))
 
 ;; clj-mutate-manifest-begin
-;; {:version 1, :tested-at "2026-03-12T09:09:43.048792-05:00", :module-hash "-1616884661", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line 5, :hash "-1894966203"} {:id "defn/read-source-forms", :kind "defn", :line 7, :end-line 15, :hash "-1905314524"} {:id "defn/discover-all-mutations", :kind "defn", :line 17, :end-line 23, :hash "1438022640"} {:id "defn/partition-by-coverage", :kind "defn", :line 25, :end-line 31, :hash "913852885"} {:id "defn/token-pattern", :kind "defn", :line 33, :end-line 46, :hash "1327827280"} {:id "defn/mutate-source-text", :kind "defn", :line 48, :end-line 63, :hash "556305298"}]}
+;; {:version 1, :tested-at "2026-09-02T15:18:05.69112-05:00", :module-hash "1160566186", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line nil, :hash "-1894966203"} {:id "defn/read-source-forms", :kind "defn", :line 7, :end-line nil, :hash "1432776152"} {:id "defn/discover-all-mutations", :kind "defn", :line 17, :end-line nil, :hash "602452094"} {:id "defn/partition-by-coverage", :kind "defn", :line 25, :end-line nil, :hash "821677293"} {:id "defn/token-pattern", :kind "defn", :line 33, :end-line nil, :hash "1327827280"} {:id "defn/mutate-source-text", :kind "defn", :line 48, :end-line nil, :hash "1783741911"}]}
 ;; clj-mutate-manifest-end

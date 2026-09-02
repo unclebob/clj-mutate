@@ -60,3 +60,7 @@
        (vec (sort-by #(:index (:site %)) @results))
        (finally
          (workers/cleanup-worker-dirs! run-base-dir))))))
+
+;; clj-mutate-manifest-begin
+;; {:version 1, :tested-at "2026-09-02T15:15:24.777111-05:00", :module-hash "-310262620", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line nil, :hash "408477767"} {:id "def/worker-root-dir", :kind "def", :line 6, :end-line nil, :hash "-2021164772"} {:id "defn-/mutate-and-test-at", :kind "defn-", :line 8, :end-line nil, :hash "534457180"} {:id "defn/mutate-and-test", :kind "defn", :line 19, :end-line nil, :hash "1569009658"} {:id "defn/mutate-and-test-in-dir", :kind "defn", :line 23, :end-line nil, :hash "-1346527105"} {:id "defn/run-mutations-parallel", :kind "defn", :line 28, :end-line nil, :hash "-388261437"}]}
+;; clj-mutate-manifest-end

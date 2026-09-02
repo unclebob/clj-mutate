@@ -40,3 +40,7 @@
   [sites new-form-indices manifest-violating-form-indices]
   {:new-form-mutations (count (filter #(contains? new-form-indices (:form-index %)) sites))
    :manifest-violating-form-mutations (count (filter #(contains? manifest-violating-form-indices (:form-index %)) sites))})
+
+;; clj-mutate-manifest-begin
+;; {:version 1, :tested-at "2026-09-02T15:15:00.296994-05:00", :module-hash "604214296", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line nil, :hash "1621961677"} {:id "defn-/filter-sites-by", :kind "defn-", :line 4, :end-line nil, :hash "341209114"} {:id "defn/filter-by-lines", :kind "defn", :line 10, :end-line nil, :hash "-479853682"} {:id "defn/filter-by-form-indices", :kind "defn", :line 14, :end-line nil, :hash "-1270395709"} {:id "defn/default-since-last-run?", :kind "defn", :line 18, :end-line nil, :hash "-71751391"} {:id "defn/select-mutation-sites", :kind "defn", :line 24, :end-line nil, :hash "-1457564386"} {:id "defn/count-changed-sites", :kind "defn", :line 32, :end-line nil, :hash "-1978221242"} {:id "defn/differential-site-counts", :kind "defn", :line 39, :end-line nil, :hash "1294887939"}]}
+;; clj-mutate-manifest-end

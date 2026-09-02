@@ -56,3 +56,7 @@
     (handle-main-result (cli/validate-args (vec args)))
     (finally
       (shutdown-runtime!))))
+
+;; clj-mutate-manifest-begin
+;; {:version 1, :tested-at "2026-09-02T15:15:12.388163-05:00", :module-hash "-1767853646", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line nil, :hash "-532135196"} {:id "defn-/exit!", :kind "defn-", :line 5, :end-line nil, :hash "-479327949"} {:id "defn-/shutdown-runtime!", :kind "defn-", :line 9, :end-line nil, :hash "404102440"} {:id "defn-/handle-main-result", :kind "defn-", :line 13, :end-line nil, :hash "27023360"} {:id "defn/-main", :kind "defn", :line 53, :end-line nil, :hash "1900473086"}]}
+;; clj-mutate-manifest-end

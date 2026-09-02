@@ -79,11 +79,16 @@
   "Orchestrator: run coverage if lcov.info missing/stale, parse, return covered lines."
   ([source-path]
    (load-coverage source-path {}))
-  ([source-path {:keys [reuse-lcov] :or {reuse-lcov false}}]
-   (let [lcov-file (File. (lcov-path))]
+  ([source-path options]
+   (let [reuse-lcov (:reuse-lcov options false)
+         lcov-file (File. (lcov-path))]
      (if (project/bb-project?)
        (covered-lines-from-lcov lcov-file source-path)
        (do
          (when-let [reason (stale-reason lcov-file source-path)]
            (reuse-or-refresh-coverage! reason source-path reuse-lcov))
          (covered-lines-from-lcov lcov-file source-path))))))
+
+;; clj-mutate-manifest-begin
+;; {:version 1, :tested-at "2026-09-02T15:17:24.937154-05:00", :module-hash "-910111229", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line nil, :hash "1909002017"} {:id "form/1/declare", :kind "declare", :line 7, :end-line nil, :hash "618546487"} {:id "defn/lcov-path", :kind "defn", :line 9, :end-line nil, :hash "1578938533"} {:id "defn/run-coverage!", :kind "defn", :line 14, :end-line nil, :hash "359690965"} {:id "defn-/newest-file-mtime", :kind "defn-", :line 20, :end-line nil, :hash "-71730915"} {:id "defn-/newest-input-mtime", :kind "defn-", :line 28, :end-line nil, :hash "1797432555"} {:id "defn-/stale-reason", :kind "defn-", :line 37, :end-line nil, :hash "869474894"} {:id "defn/coverage-status", :kind "defn", :line 45, :end-line nil, :hash "1393845949"} {:id "defn-/covered-lines-from-lcov", :kind "defn-", :line 56, :end-line nil, :hash "75634368"} {:id "defn-/reuse-or-refresh-coverage!", :kind "defn-", :line 61, :end-line nil, :hash "-1900961287"} {:id "defn/load-coverage", :kind "defn", :line 78, :end-line nil, :hash "-689699037"}]}
+;; clj-mutate-manifest-end
