@@ -3,6 +3,7 @@
             [clj-mutate.cli :as cli]
             [clj-mutate.core :as core]
             [clj-mutate.coverage :as coverage]
+            [clj-mutate.execution :as execution]
             [clj-mutate.manifest :as manifest]
             [clj-mutate.project :as project]
             [clj-mutate.runner :as runner]
@@ -819,7 +820,7 @@
                  {:index 1 :original '> :mutant '>= :line 7 :description "> -> >="}
                  {:index 2 :original '= :mutant 'not= :line 9 :description "= -> not="}]
           call-count (atom 0)]
-      (with-redefs [core/mutate-and-test-in-dir
+      (with-redefs [execution/mutate-and-test-in-dir
                     (fn [_ _ _ site _ _]
                       (swap! call-count inc)
                       {:site site :result :killed :timeout? false})
@@ -843,7 +844,7 @@
     (let [sites (vec (for [i (range 10)]
                        {:index i :original '+ :mutant '- :line (+ 5 i)
                         :description (str "mut-" i)}))]
-      (with-redefs [core/mutate-and-test-in-dir
+      (with-redefs [execution/mutate-and-test-in-dir
                     (fn [_ _ _ site _ _]
                       {:site site :result :killed :timeout? false})
                     workers/new-run-base-dir
@@ -863,7 +864,7 @@
                        {:index i :original '+ :mutant '- :line (+ 5 i)
                         :description (str "mut-" i)}))
           created-workers (atom nil)]
-      (with-redefs [core/mutate-and-test-in-dir
+      (with-redefs [execution/mutate-and-test-in-dir
                     (fn [_ _ _ site _ _]
                       {:site site :result :killed :timeout? false})
                     workers/new-run-base-dir

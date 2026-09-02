@@ -122,7 +122,47 @@
         (java.nio.file.Files/deleteIfExists
           (.toPath (java.io.File. temp-lcov)))
         (should-be-nil (cov/load-coverage "src/empire/combat.cljc"))
-        (should= false @ran?)))))
+        (should= false @ran?))))
+
+  (it "reads existing lcov for babashka projects without regenerating"
+    (let [ran? (atom false)
+          temp-lcov (str "/tmp/test-lcov-bb-exists-" (System/nanoTime) ".info")]
+      (spit temp-lcov sample-lcov)
+      (with-redefs [cov/run-coverage! (fn [] (reset! ran? true) true)
+                    cov/lcov-path (constantly temp-lcov)
+                    clj-mutate.project/bb-project? (constantly true)]
+        (should= #{1 3 5} (cov/load-coverage "src/empire/combat.cljc"))
+        (should= false @ran?))
+      (java.nio.file.Files/deleteIfExists
+        (.toPath (java.io.File. temp-lcov)))))
+
+  (it "regenerates stale lcov when reuse is not requested"
+    (let [ran? (atom false)
+          temp-lcov (str "/tmp/test-lcov-stale-refresh-" (System/nanoTime) ".info")]
+      (spit temp-lcov sample-lcov)
+      (with-redefs [cov/run-coverage! (fn [] (reset! ran? true) true)
+                    cov/lcov-path (constantly temp-lcov)
+                    cov/stale-reason (fn [_ _] :stale)
+                    clj-mutate.project/bb-project? (constantly false)]
+        (let [output (with-out-str
+                       (should= #{1 3 5} (cov/load-coverage "src/empire/combat.cljc")))]
+          (should @ran?)
+          (should-contain "Coverage file is stale; regenerating LCOV with clj -M:cov --lcov." output)))
+      (java.nio.file.Files/deleteIfExists
+        (.toPath (java.io.File. temp-lcov)))))
+
+  (it "continues with existing coverage when refresh fails"
+    (let [temp-lcov (str "/tmp/test-lcov-refresh-fail-" (System/nanoTime) ".info")]
+      (spit temp-lcov sample-lcov)
+      (with-redefs [cov/run-coverage! (fn [] false)
+                    cov/lcov-path (constantly temp-lcov)
+                    cov/stale-reason (fn [_ _] :stale)
+                    clj-mutate.project/bb-project? (constantly false)]
+        (let [output (with-out-str
+                       (should= #{1 3 5} (cov/load-coverage "src/empire/combat.cljc")))]
+          (should-contain "Coverage refresh failed; continuing with existing coverage if available." output)))
+      (java.nio.file.Files/deleteIfExists
+        (.toPath (java.io.File. temp-lcov))))))
 
 (describe "coverage-status"
   (it "reports lcov presence and freshness diagnostics"

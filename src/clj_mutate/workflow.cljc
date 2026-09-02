@@ -9,17 +9,19 @@
 (declare count-changed-sites
          differential-site-counts)
 
+(defn- filter-sites-by
+  [sites allowed-values key-fn]
+  (if allowed-values
+    (vec (filter #(contains? allowed-values (key-fn %)) sites))
+    sites))
+
 (defn filter-by-lines
   [sites lines]
-  (if lines
-    (vec (filter #(contains? lines (:line %)) sites))
-    sites))
+  (filter-sites-by sites lines :line))
 
 (defn filter-by-form-indices
   [sites form-indices]
-  (if form-indices
-    (vec (filter #(contains? form-indices (:form-index %)) sites))
-    sites))
+  (filter-sites-by sites form-indices :form-index))
 
 (defn mutation-run-context
   [source-path since-last-run reuse-lcov]
@@ -96,6 +98,11 @@
     (= (:module-hash prior-manifest) (manifest/module-hash forms)) 0
     :else (count (filter-by-form-indices all-sites (manifest/changed-form-indices forms prior-manifest)))))
 
+(defn- print-previous-mutation-test
+  [prev-date]
+  (when prev-date
+    (println (format "Previous mutation test: %s" prev-date))))
+
 (defn scan-mutation-sites
   [source-path mutation-warning]
   (let [content (slurp source-path)
@@ -106,11 +113,60 @@
         all-sites (source/discover-all-mutations forms)
         changed-sites (count-changed-sites all-sites prior-manifest forms)]
     (println (format "=== Mutation Scan: %s ===" source-path))
-    (when prev-date
-      (println (format "Previous mutation test: %s" prev-date)))
+    (print-previous-mutation-test prev-date)
     (println (format "Found %d mutation sites." (count all-sites)))
     (println (format "Changed mutation sites: %d" changed-sites))
     (print-mutation-warning mutation-warning (count all-sites))))
+
+(defn- print-reuse-lcov-status
+  [reuse-lcov coverage-status]
+  (when reuse-lcov
+    (println (format "Reusing existing LCOV data from %s."
+                     (:lcov-path coverage-status)))
+    (println "Warning: coverage may be stale; covered/uncovered site classification may be inaccurate.")
+    (println (format "LCOV exists: %s" (if (:exists? coverage-status) "yes" "no")))
+    (when (:last-modified coverage-status)
+      (println (format "LCOV last modified: %d" (:last-modified coverage-status))))
+    (println (format "Target source newer than LCOV: %s"
+                     (if (:source-newer? coverage-status) "yes" "no")))))
+
+(defn- print-site-counts
+  [all-sites covered-sites uncovered changed-mutation-sites]
+  (println (format "Total mutation sites: %d" (count all-sites)))
+  (println (format "Covered mutation sites: %d" (count covered-sites)))
+  (println (format "Uncovered mutation sites: %d" (count uncovered)))
+  (println (format "Changed mutation sites: %d" changed-mutation-sites)))
+
+(defn- print-manifest-status
+  [manifest-exists? module-hash-changed?]
+  (println (format "Manifest exists: %s" (if manifest-exists? "yes" "no")))
+  (println (format "Module hash changed: %s"
+                   (if manifest-exists?
+                     (if module-hash-changed? "yes" "no")
+                     "n/a"))))
+
+(defn- print-surface-area
+  [surface-counts]
+  (println (format "Differential surface area: %d mutations in new top-level forms"
+                   (:new-form-mutations surface-counts)))
+  (println (format "Manifest-violating surface area: %d mutations"
+                   (:manifest-violating-form-mutations surface-counts))))
+
+(defn- print-line-filter
+  [lines sites]
+  (when lines
+    (println (format "Filtering to lines: %s → %d mutations to test."
+                     (str/join "," (sort lines)) (count sites)))))
+
+(defn- print-since-last-run-filter
+  [since-last-run prior-manifest module-unchanged? sites]
+  (when since-last-run
+    (if prior-manifest
+      (if module-unchanged?
+        (println "Module hash unchanged; no mutations to test.")
+        (println (format "Filtering to changed top-level forms → %d mutations to test."
+                         (count sites))))
+      (println "No prior embedded manifest found; running all covered mutations."))))
 
 (defn print-run-header
   [source-path prev-date header-info lines since-last-run prior-manifest module-unchanged? sites warning-threshold]
@@ -119,41 +175,14 @@
          :as info} header-info
         surface-counts (:surface-area-counts info)]
     (println (format "=== Mutation Testing: %s ===" source-path))
-    (when prev-date
-      (println (format "Previous mutation test: %s" prev-date)))
-    (when reuse-lcov
-      (println (format "Reusing existing LCOV data from %s."
-                       (:lcov-path coverage-status)))
-      (println "Warning: coverage may be stale; covered/uncovered site classification may be inaccurate.")
-      (println (format "LCOV exists: %s" (if (:exists? coverage-status) "yes" "no")))
-      (when (:last-modified coverage-status)
-        (println (format "LCOV last modified: %d" (:last-modified coverage-status))))
-      (println (format "Target source newer than LCOV: %s"
-                       (if (:source-newer? coverage-status) "yes" "no"))))
-    (println (format "Total mutation sites: %d" (count all-sites)))
-    (println (format "Covered mutation sites: %d" (count covered-sites)))
-    (println (format "Uncovered mutation sites: %d" (count uncovered)))
-    (println (format "Changed mutation sites: %d" changed-mutation-sites))
-    (println (format "Manifest exists: %s" (if manifest-exists? "yes" "no")))
-    (println (format "Module hash changed: %s"
-                     (if manifest-exists?
-                       (if module-hash-changed? "yes" "no")
-                       "n/a")))
-    (println (format "Differential surface area: %d mutations in new top-level forms"
-                     (:new-form-mutations surface-counts)))
-    (println (format "Manifest-violating surface area: %d mutations"
-                     (:manifest-violating-form-mutations surface-counts)))
+    (print-previous-mutation-test prev-date)
+    (print-reuse-lcov-status reuse-lcov coverage-status)
+    (print-site-counts all-sites covered-sites uncovered changed-mutation-sites)
+    (print-manifest-status manifest-exists? module-hash-changed?)
+    (print-surface-area surface-counts)
     (print-mutation-warning warning-threshold (count all-sites))
-    (when lines
-      (println (format "Filtering to lines: %s → %d mutations to test."
-                       (str/join "," (sort lines)) (count sites))))
-    (when since-last-run
-      (if prior-manifest
-        (if module-unchanged?
-          (println "Module hash unchanged; no mutations to test.")
-          (println (format "Filtering to changed top-level forms → %d mutations to test."
-                           (count sites))))
-        (println "No prior embedded manifest found; running all covered mutations.")))
+    (print-line-filter lines sites)
+    (print-since-last-run-filter since-last-run prior-manifest module-unchanged? sites)
     (println)))
 
 (defn print-uncovered
@@ -170,7 +199,7 @@
    :manifest-violating-form-mutations (count (filter #(contains? manifest-violating-form-indices (:form-index %)) sites))})
 
 (defn- print-summary
-  [killed total pct survivors uncovered-count differential-counts]
+  [killed total pct survivors uncovered-count]
   (println (format "\n=== Summary ==="))
   (println (format "%d/%d mutants killed (%.1f%%)" killed total pct))
   (when (pos? uncovered-count)
@@ -184,13 +213,12 @@
                        (:description (:site r)))))))
 
 (defn summarize-results
-  [results lines since-last-run uncovered differential-counts]
+  [results lines since-last-run uncovered _differential-counts]
   (let [killed (count (filter #(= :killed (:result %)) results))
         total (count results)
         pct (if (zero? total) 0.0 (* 100.0 (/ killed total)))
         survivors (filter #(= :survived (:result %)) results)]
-    (print-summary killed total pct survivors (if (or lines since-last-run) 0 (count uncovered))
-                   differential-counts)))
+    (print-summary killed total pct survivors (if (or lines since-last-run) 0 (count uncovered)))))
 
 (defn run-mutation-suite
   [sites source-path analysis-content timeout-ms max-workers test-command]
@@ -212,5 +240,5 @@
       (println "FAIL — specs do not pass without mutations. Aborting."))))
 
 ;; clj-mutate-manifest-begin
-;; {:version 1, :tested-at "2026-03-14T08:12:00.779887-05:00", :module-hash "-1461544259", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line 7, :hash "673503783"} {:id "form/1/declare", :kind "declare", :line 9, :end-line 10, :hash "1862395422"} {:id "defn/filter-by-lines", :kind "defn", :line 12, :end-line 16, :hash "1087155409"} {:id "defn/filter-by-form-indices", :kind "defn", :line 18, :end-line 22, :hash "603340802"} {:id "defn/mutation-run-context", :kind "defn", :line 24, :end-line 71, :hash "65925430"} {:id "defn/default-since-last-run?", :kind "defn", :line 73, :end-line 77, :hash "-71751391"} {:id "defn/select-mutation-sites", :kind "defn", :line 79, :end-line 85, :hash "-1457564386"} {:id "defn/print-mutation-warning", :kind "defn", :line 87, :end-line 90, :hash "-8091185"} {:id "defn-/count-changed-sites", :kind "defn-", :line 92, :end-line 97, :hash "2117283179"} {:id "defn/scan-mutation-sites", :kind "defn", :line 99, :end-line 113, :hash "-777824472"} {:id "defn/print-run-header", :kind "defn", :line 115, :end-line 157, :hash "-1423269426"} {:id "defn/print-uncovered", :kind "defn", :line 159, :end-line 165, :hash "-1174101582"} {:id "defn/differential-site-counts", :kind "defn", :line 167, :end-line 170, :hash "-769067463"} {:id "defn-/print-summary", :kind "defn-", :line 172, :end-line 184, :hash "918256857"} {:id "defn/summarize-results", :kind "defn", :line 186, :end-line 193, :hash "-2012736488"} {:id "defn/run-mutation-suite", :kind "defn", :line 195, :end-line 199, :hash "307720017"} {:id "defn/with-baseline", :kind "defn", :line 201, :end-line 212, :hash "2111533211"}]}
+;; {:version 1, :tested-at "2026-09-02T14:42:55.941437-05:00", :module-hash "-661820954", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line 7, :hash "673503783"} {:id "form/1/declare", :kind "declare", :line 9, :end-line 10, :hash "1862395422"} {:id "defn-/filter-sites-by", :kind "defn-", :line 12, :end-line 16, :hash "-2118914095"} {:id "defn/filter-by-lines", :kind "defn", :line 18, :end-line 20, :hash "-479853682"} {:id "defn/filter-by-form-indices", :kind "defn", :line 22, :end-line 24, :hash "-1270395709"} {:id "defn/mutation-run-context", :kind "defn", :line 26, :end-line 73, :hash "65925430"} {:id "defn/default-since-last-run?", :kind "defn", :line 75, :end-line 79, :hash "-71751391"} {:id "defn/select-mutation-sites", :kind "defn", :line 81, :end-line 87, :hash "-1457564386"} {:id "defn/print-mutation-warning", :kind "defn", :line 89, :end-line 92, :hash "-8091185"} {:id "defn-/count-changed-sites", :kind "defn-", :line 94, :end-line 99, :hash "2117283179"} {:id "defn-/print-previous-mutation-test", :kind "defn-", :line 101, :end-line 104, :hash "1791720437"} {:id "defn/scan-mutation-sites", :kind "defn", :line 106, :end-line 119, :hash "-1244175502"} {:id "defn-/print-reuse-lcov-status", :kind "defn-", :line 121, :end-line 131, :hash "245360152"} {:id "defn-/print-site-counts", :kind "defn-", :line 133, :end-line 138, :hash "-668192430"} {:id "defn-/print-manifest-status", :kind "defn-", :line 140, :end-line 146, :hash "1457750507"} {:id "defn-/print-surface-area", :kind "defn-", :line 148, :end-line 153, :hash "1682025556"} {:id "defn-/print-line-filter", :kind "defn-", :line 155, :end-line 159, :hash "1854309138"} {:id "defn-/print-since-last-run-filter", :kind "defn-", :line 161, :end-line 169, :hash "1987635254"} {:id "defn/print-run-header", :kind "defn", :line 171, :end-line 186, :hash "-665253061"} {:id "defn/print-uncovered", :kind "defn", :line 188, :end-line 194, :hash "-1174101582"} {:id "defn/differential-site-counts", :kind "defn", :line 196, :end-line 199, :hash "688494479"} {:id "defn-/print-summary", :kind "defn-", :line 201, :end-line 213, :hash "-647776276"} {:id "defn/summarize-results", :kind "defn", :line 215, :end-line 221, :hash "-895382669"} {:id "defn/run-mutation-suite", :kind "defn", :line 223, :end-line 227, :hash "307720017"} {:id "defn/with-baseline", :kind "defn", :line 229, :end-line 240, :hash "2111533211"}]}
 ;; clj-mutate-manifest-end

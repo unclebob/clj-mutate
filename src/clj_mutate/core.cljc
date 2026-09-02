@@ -3,8 +3,7 @@
             [clj-mutate.execution :as execution]
             [clj-mutate.manifest :as manifest]
             [clj-mutate.source :as source]
-            [clj-mutate.workflow :as workflow]
-            [clj-mutate.workers :as workers]))
+            [clj-mutate.workflow :as workflow]))
 
 (def usage-summary cli/usage-summary)
 
@@ -41,38 +40,7 @@
 (def summarize-results workflow/summarize-results)
 (def with-baseline workflow/with-baseline)
 
-(defn run-mutations-parallel
-  [sites source-path original-content timeout-ms max-workers test-command]
-  (let [run-base-dir (workers/new-run-base-dir execution/worker-root-dir)
-        n-workers (max 1 (min (count sites)
-                              (.availableProcessors (Runtime/getRuntime))
-                              (or max-workers Integer/MAX_VALUE)))
-        worker-dirs (workers/create-worker-dirs!
-                      run-base-dir source-path original-content n-workers)
-        queue (java.util.concurrent.LinkedBlockingQueue. ^java.util.Collection (vec sites))
-        results (atom [])
-        counter (atom 0)
-        total (count sites)
-        lock (Object.)
-        futures (mapv
-                  (fn [dir]
-                    (future
-                      (loop []
-                        (when-let [site (.poll queue)]
-                          (let [r (mutate-and-test-in-dir dir source-path
-                                                          original-content site timeout-ms
-                                                          test-command)
-                                n (swap! counter inc)]
-                            (swap! results conj r)
-                            (locking lock
-                              (print-progress (dec n) total r site))
-                            (recur))))))
-                  worker-dirs)]
-    (try
-      (run! deref futures)
-      (vec (sort-by #(:index (:site %)) @results))
-      (finally
-        (workers/cleanup-worker-dirs! run-base-dir)))))
+(def run-mutations-parallel execution/run-mutations-parallel)
 
 (defn run-mutation-suite
   [sites source-path analysis-content timeout-ms max-workers test-command]
@@ -87,11 +55,6 @@
 (defn- shutdown-runtime!
   []
   (shutdown-agents))
-
-(defn- print-runtime-error-and-exit!
-  [message]
-  (println message)
-  (exit! 1))
 
 (defn- update-manifest!
   [source-path]
@@ -202,5 +165,5 @@
       (shutdown-runtime!))))
 
 ;; clj-mutate-manifest-begin
-;; {:version 1, :tested-at "2026-03-14T08:12:08.982675-05:00", :module-hash "-1711527434", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line 7, :hash "-861550392"} {:id "def/usage-summary", :kind "def", :line 9, :end-line 9, :hash "-1041004115"} {:id "def/extract-mutation-date", :kind "def", :line 11, :end-line 11, :hash "-1062118604"} {:id "def/stamp-mutation-date", :kind "def", :line 12, :end-line 12, :hash "-1440451022"} {:id "def/extract-embedded-manifest", :kind "def", :line 13, :end-line 13, :hash "-635050615"} {:id "def/strip-mutation-metadata", :kind "def", :line 14, :end-line 14, :hash "-8711223"} {:id "def/top-level-form-manifest", :kind "def", :line 15, :end-line 15, :hash "1975075233"} {:id "def/module-hash", :kind "def", :line 16, :end-line 16, :hash "1918681287"} {:id "def/changed-form-indices", :kind "def", :line 17, :end-line 17, :hash "43323891"} {:id "def/build-embedded-manifest", :kind "def", :line 18, :end-line 18, :hash "-936382977"} {:id "def/embed-mutation-manifest", :kind "def", :line 19, :end-line 19, :hash "-757751694"} {:id "def/save-backup!", :kind "def", :line 20, :end-line 20, :hash "2126896465"} {:id "def/restore-from-backup!", :kind "def", :line 21, :end-line 21, :hash "-1092217530"} {:id "def/cleanup-backup!", :kind "def", :line 22, :end-line 22, :hash "1988961436"} {:id "def/read-source-forms", :kind "def", :line 24, :end-line 24, :hash "-1520520130"} {:id "def/discover-all-mutations", :kind "def", :line 25, :end-line 25, :hash "432183859"} {:id "def/partition-by-coverage", :kind "def", :line 26, :end-line 26, :hash "-209749297"} {:id "def/mutate-source-text", :kind "def", :line 27, :end-line 27, :hash "-19377979"} {:id "def/mutate-and-test", :kind "def", :line 29, :end-line 29, :hash "-1038016521"} {:id "def/mutate-and-test-in-dir", :kind "def", :line 30, :end-line 30, :hash "693295212"} {:id "def/format-report", :kind "def", :line 31, :end-line 31, :hash "-568892377"} {:id "def/print-progress", :kind "def", :line 32, :end-line 32, :hash "-727297614"} {:id "def/validate-args", :kind "def", :line 34, :end-line 34, :hash "-651611374"} {:id "def/mutation-run-context", :kind "def", :line 36, :end-line 36, :hash "-1499598464"} {:id "def/select-mutation-sites", :kind "def", :line 37, :end-line 37, :hash "1053871457"} {:id "def/print-uncovered", :kind "def", :line 38, :end-line 38, :hash "-213588584"} {:id "def/scan-mutation-sites", :kind "def", :line 39, :end-line 39, :hash "-1645560296"} {:id "def/print-run-header", :kind "def", :line 40, :end-line 40, :hash "-886479159"} {:id "def/summarize-results", :kind "def", :line 41, :end-line 41, :hash "-171328939"} {:id "def/with-baseline", :kind "def", :line 42, :end-line 42, :hash "-659612404"} {:id "defn/run-mutations-parallel", :kind "defn", :line 44, :end-line 75, :hash "1938703659"} {:id "defn/run-mutation-suite", :kind "defn", :line 77, :end-line 81, :hash "1170417424"} {:id "defn-/exit!", :kind "defn-", :line 83, :end-line 85, :hash "-479327949"} {:id "defn-/shutdown-runtime!", :kind "defn-", :line 87, :end-line 89, :hash "404102440"} {:id "defn-/update-manifest!", :kind "defn-", :line 91, :end-line 102, :hash "-97871951"} {:id "defn/run-mutation-testing", :kind "defn", :line 104, :end-line 150, :hash "-447814523"} {:id "defn-/handle-main-result", :kind "defn-", :line 152, :end-line 181, :hash "1431059684"} {:id "defn/-main", :kind "defn", :line 183, :end-line 188, :hash "2057772400"}]}
+;; {:version 1, :tested-at "2026-09-02T14:42:47.805623-05:00", :module-hash "429749580", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line 6, :hash "1831711861"} {:id "def/usage-summary", :kind "def", :line 8, :end-line 8, :hash "-1041004115"} {:id "def/extract-mutation-date", :kind "def", :line 10, :end-line 10, :hash "-1062118604"} {:id "def/stamp-mutation-date", :kind "def", :line 11, :end-line 11, :hash "-1440451022"} {:id "def/extract-embedded-manifest", :kind "def", :line 12, :end-line 12, :hash "-635050615"} {:id "def/strip-mutation-metadata", :kind "def", :line 13, :end-line 13, :hash "-8711223"} {:id "def/top-level-form-manifest", :kind "def", :line 14, :end-line 14, :hash "1975075233"} {:id "def/module-hash", :kind "def", :line 15, :end-line 15, :hash "1918681287"} {:id "def/changed-form-indices", :kind "def", :line 16, :end-line 16, :hash "43323891"} {:id "def/build-embedded-manifest", :kind "def", :line 17, :end-line 17, :hash "-936382977"} {:id "def/embed-mutation-manifest", :kind "def", :line 18, :end-line 18, :hash "-757751694"} {:id "def/save-backup!", :kind "def", :line 19, :end-line 19, :hash "2126896465"} {:id "def/restore-from-backup!", :kind "def", :line 20, :end-line 20, :hash "-1092217530"} {:id "def/cleanup-backup!", :kind "def", :line 21, :end-line 21, :hash "1988961436"} {:id "def/read-source-forms", :kind "def", :line 23, :end-line 23, :hash "-1520520130"} {:id "def/discover-all-mutations", :kind "def", :line 24, :end-line 24, :hash "432183859"} {:id "def/partition-by-coverage", :kind "def", :line 25, :end-line 25, :hash "-209749297"} {:id "def/mutate-source-text", :kind "def", :line 26, :end-line 26, :hash "-19377979"} {:id "def/mutate-and-test", :kind "def", :line 28, :end-line 28, :hash "-1038016521"} {:id "def/mutate-and-test-in-dir", :kind "def", :line 29, :end-line 29, :hash "693295212"} {:id "def/format-report", :kind "def", :line 30, :end-line 30, :hash "-568892377"} {:id "def/print-progress", :kind "def", :line 31, :end-line 31, :hash "-727297614"} {:id "def/validate-args", :kind "def", :line 33, :end-line 33, :hash "-651611374"} {:id "def/mutation-run-context", :kind "def", :line 35, :end-line 35, :hash "-1499598464"} {:id "def/select-mutation-sites", :kind "def", :line 36, :end-line 36, :hash "1053871457"} {:id "def/print-uncovered", :kind "def", :line 37, :end-line 37, :hash "-213588584"} {:id "def/scan-mutation-sites", :kind "def", :line 38, :end-line 38, :hash "-1645560296"} {:id "def/print-run-header", :kind "def", :line 39, :end-line 39, :hash "-886479159"} {:id "def/summarize-results", :kind "def", :line 40, :end-line 40, :hash "-171328939"} {:id "def/with-baseline", :kind "def", :line 41, :end-line 41, :hash "-659612404"} {:id "def/run-mutations-parallel", :kind "def", :line 43, :end-line 43, :hash "999508817"} {:id "defn/run-mutation-suite", :kind "defn", :line 45, :end-line 49, :hash "1170417424"} {:id "defn-/exit!", :kind "defn-", :line 51, :end-line 53, :hash "-479327949"} {:id "defn-/shutdown-runtime!", :kind "defn-", :line 55, :end-line 57, :hash "404102440"} {:id "defn-/update-manifest!", :kind "defn-", :line 59, :end-line 70, :hash "-97871951"} {:id "defn/run-mutation-testing", :kind "defn", :line 72, :end-line 118, :hash "186288514"} {:id "defn-/handle-main-result", :kind "defn-", :line 120, :end-line 158, :hash "614158729"} {:id "defn/-main", :kind "defn", :line 160, :end-line 165, :hash "2057772400"}]}
 ;; clj-mutate-manifest-end

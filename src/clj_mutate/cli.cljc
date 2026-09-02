@@ -81,24 +81,30 @@
         (assoc options :lines parsed-lines)
         (usage-error "Invalid value for --lines. Expected comma-separated integers.")))))
 
+(defn- reject-scan-or-update
+  [options option-name]
+  (when (or (:scan options) (:update-manifest options))
+    (usage-error (str "Cannot combine --scan or --update-manifest with " option-name "."))))
+
+(defn- parse-int-execution-option
+  [options value option-key option-name]
+  (or (reject-scan-or-update options option-name)
+      (assoc-valid-option options option-key (parse-positive-int-option value option-name))))
+
 (defn- parse-timeout-factor-option
   [options value]
-  (if (or (:scan options) (:update-manifest options))
-    (usage-error "Cannot combine --scan or --update-manifest with --timeout-factor.")
-    (assoc-valid-option options :timeout-factor (parse-positive-int-option value "--timeout-factor"))))
+  (parse-int-execution-option options value :timeout-factor "--timeout-factor"))
 
 (defn- parse-test-command-option
   [options value]
-  (cond
-    (or (:scan options) (:update-manifest options)) (usage-error "Cannot combine --scan or --update-manifest with --test-command.")
-    (str/blank? value) (usage-error "Missing value for --test-command.")
-    :else (assoc options :test-command value)))
+  (or (reject-scan-or-update options "--test-command")
+      (if (str/blank? value)
+        (usage-error "Missing value for --test-command.")
+        (assoc options :test-command value))))
 
 (defn- parse-max-workers-option
   [options value]
-  (if (or (:scan options) (:update-manifest options))
-    (usage-error "Cannot combine --scan or --update-manifest with --max-workers.")
-    (assoc-valid-option options :max-workers (parse-positive-int-option value "--max-workers"))))
+  (parse-int-execution-option options value :max-workers "--max-workers"))
 
 (defn- parse-mutation-warning-option
   [options value]
@@ -115,42 +121,61 @@
   [options option-key value]
   ((get option-updaters option-key) options value))
 
+(defn- execution-options-present?
+  [options]
+  (or (:lines options)
+      (:since-last-run options)
+      (:mutate-all options)
+      (not= 10 (:timeout-factor options))
+      (not= (default-test-command) (:test-command options))
+      (:max-workers options)))
+
+(defn- enable-unless-conflict
+  [options rest-args flag-key conflict-fn message]
+  (if (conflict-fn options)
+    [rest-args (usage-error message)]
+    [rest-args (assoc options flag-key true)]))
+
+(def flag-enablers
+  {"--scan"
+   {:key :scan
+    :conflict-fn #(or (:update-manifest %) (execution-options-present? %))
+    :message "Cannot combine --scan with --update-manifest or mutation execution options."}
+   "--update-manifest"
+   {:key :update-manifest
+    :conflict-fn #(or (:scan %) (execution-options-present? %))
+    :message "Cannot combine --update-manifest with --scan or mutation execution options."}
+   "--since-last-run"
+   {:key :since-last-run
+    :conflict-fn #(or (:scan %) (:update-manifest %) (:lines %) (:mutate-all %))
+    :message "Cannot combine --since-last-run with --scan, --update-manifest, --lines, or --mutate-all."}
+   "--mutate-all"
+   {:key :mutate-all
+    :conflict-fn #(or (:scan %) (:update-manifest %) (:lines %) (:since-last-run %))
+    :message "Cannot combine --mutate-all with --scan, --update-manifest, --lines, or --since-last-run."}})
+
+(defn- consume-flag
+  [options arg rest-args]
+  (let [{:keys [key conflict-fn message]} (get flag-enablers arg)]
+    (enable-unless-conflict options rest-args key conflict-fn message)))
+
+(defn- consume-valued-option
+  [options arg rest-args]
+  (if-let [value (first rest-args)]
+    [(rest rest-args) (update-arg-option options arg value)]
+    [rest-args (usage-error (str "Missing value for " arg "."))]))
+
 (defn- consume-option
   [options arg rest-args]
   (cond
-    (= "--scan" arg)
-    (if (or (:update-manifest options) (:lines options) (:since-last-run options) (:mutate-all options)
-            (not= 10 (:timeout-factor options))
-            (not= (default-test-command) (:test-command options))
-            (:max-workers options))
-      [rest-args (usage-error "Cannot combine --scan with --update-manifest or mutation execution options.")]
-      [rest-args (assoc options :scan true)])
-
-    (= "--update-manifest" arg)
-    (if (or (:scan options) (:lines options) (:since-last-run options) (:mutate-all options)
-            (not= 10 (:timeout-factor options))
-            (not= (default-test-command) (:test-command options))
-            (:max-workers options))
-      [rest-args (usage-error "Cannot combine --update-manifest with --scan or mutation execution options.")]
-      [rest-args (assoc options :update-manifest true)])
+    (contains? flag-enablers arg)
+    (consume-flag options arg rest-args)
 
     (= "--reuse-lcov" arg)
     [rest-args (assoc options :reuse-lcov true)]
 
-    (= "--since-last-run" arg)
-    (if (or (:scan options) (:update-manifest options) (:lines options) (:mutate-all options))
-      [rest-args (usage-error "Cannot combine --since-last-run with --scan, --update-manifest, --lines, or --mutate-all.")]
-      [rest-args (assoc options :since-last-run true)])
-
-    (= "--mutate-all" arg)
-    (if (or (:scan options) (:update-manifest options) (:lines options) (:since-last-run options))
-      [rest-args (usage-error "Cannot combine --mutate-all with --scan, --update-manifest, --lines, or --since-last-run.")]
-      [rest-args (assoc options :mutate-all true)])
-
     (contains? option-updaters arg)
-    (if-let [value (first rest-args)]
-      [(rest rest-args) (update-arg-option options arg value)]
-      [rest-args (usage-error (str "Missing value for " arg "."))])
+    (consume-valued-option options arg rest-args)
 
     (str/starts-with? arg "--")
     [rest-args (usage-error (str "Unknown option: " arg))]
@@ -175,5 +200,5 @@
             (recur remaining updated-options)))))))
 
 ;; clj-mutate-manifest-begin
-;; {:version 1, :tested-at "2026-03-14T08:11:30.2678-05:00", :module-hash "-369639701", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line 3, :hash "1659780056"} {:id "def/default-test-command", :kind "def", :line 5, :end-line 5, :hash "-1188861817"} {:id "def/usage-summary", :kind "def", :line 7, :end-line 22, :hash "1058706533"} {:id "def/default-options", :kind "def", :line 24, :end-line 35, :hash "-465033091"} {:id "defn-/parse-lines", :kind "defn-", :line 37, :end-line 40, :hash "-297381036"} {:id "defn-/usage-error", :kind "defn-", :line 42, :end-line 44, :hash "1974487799"} {:id "defn-/ensure-source-path", :kind "defn-", :line 46, :end-line 52, :hash "-1213637125"} {:id "defn-/parse-positive-int-option", :kind "defn-", :line 54, :end-line 59, :hash "-1335572082"} {:id "defn-/assoc-valid-option", :kind "defn-", :line 61, :end-line 65, :hash "-799587466"} {:id "defn-/parse-lines-option", :kind "defn-", :line 67, :end-line 74, :hash "-1155732671"} {:id "defn-/parse-timeout-factor-option", :kind "defn-", :line 76, :end-line 80, :hash "-535890960"} {:id "defn-/parse-test-command-option", :kind "defn-", :line 82, :end-line 87, :hash "-1514324896"} {:id "defn-/parse-max-workers-option", :kind "defn-", :line 89, :end-line 93, :hash "2102075008"} {:id "defn-/parse-mutation-warning-option", :kind "defn-", :line 95, :end-line 97, :hash "1462324008"} {:id "def/option-updaters", :kind "def", :line 99, :end-line 104, :hash "-477315895"} {:id "defn-/update-arg-option", :kind "defn-", :line 106, :end-line 108, :hash "744944125"} {:id "defn-/consume-option", :kind "defn-", :line 110, :end-line 154, :hash "669926157"} {:id "defn/validate-args", :kind "defn", :line 156, :end-line 167, :hash "-118263957"}]}
+;; {:version 1, :tested-at "2026-09-02T14:42:44.74711-05:00", :module-hash "967202217", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line 4, :hash "324014734"} {:id "defn/default-test-command", :kind "defn", :line 6, :end-line 8, :hash "1423082516"} {:id "def/usage-summary", :kind "def", :line 10, :end-line 26, :hash "2141497425"} {:id "def/default-options", :kind "def", :line 28, :end-line 39, :hash "-1800562664"} {:id "defn-/initial-options", :kind "defn-", :line 41, :end-line 43, :hash "-870668115"} {:id "defn-/parse-lines", :kind "defn-", :line 45, :end-line 48, :hash "1324155486"} {:id "defn-/usage-error", :kind "defn-", :line 50, :end-line 52, :hash "1974487799"} {:id "defn-/ensure-source-path", :kind "defn-", :line 54, :end-line 60, :hash "-1213637125"} {:id "defn-/parse-positive-int-option", :kind "defn-", :line 62, :end-line 67, :hash "-1335572082"} {:id "defn-/assoc-valid-option", :kind "defn-", :line 69, :end-line 73, :hash "-799587466"} {:id "defn-/parse-lines-option", :kind "defn-", :line 75, :end-line 82, :hash "-1155732671"} {:id "defn-/reject-scan-or-update", :kind "defn-", :line 84, :end-line 87, :hash "-487893733"} {:id "defn-/parse-int-execution-option", :kind "defn-", :line 89, :end-line 92, :hash "1396211893"} {:id "defn-/parse-timeout-factor-option", :kind "defn-", :line 94, :end-line 96, :hash "-609526442"} {:id "defn-/parse-test-command-option", :kind "defn-", :line 98, :end-line 103, :hash "-1186903327"} {:id "defn-/parse-max-workers-option", :kind "defn-", :line 105, :end-line 107, :hash "-1666636307"} {:id "defn-/parse-mutation-warning-option", :kind "defn-", :line 109, :end-line 111, :hash "1462324008"} {:id "def/option-updaters", :kind "def", :line 113, :end-line 118, :hash "-477315895"} {:id "defn-/update-arg-option", :kind "defn-", :line 120, :end-line 122, :hash "744944125"} {:id "defn-/execution-options-present?", :kind "defn-", :line 124, :end-line 131, :hash "1007510315"} {:id "defn-/enable-unless-conflict", :kind "defn-", :line 133, :end-line 137, :hash "1158487389"} {:id "def/flag-enablers", :kind "def", :line 139, :end-line 155, :hash "-2085160842"} {:id "defn-/consume-flag", :kind "defn-", :line 157, :end-line 160, :hash "519063344"} {:id "defn-/consume-valued-option", :kind "defn-", :line 162, :end-line 166, :hash "1562100389"} {:id "defn-/consume-option", :kind "defn-", :line 168, :end-line 187, :hash "-1230383573"} {:id "defn/validate-args", :kind "defn", :line 189, :end-line 200, :hash "285148323"}]}
 ;; clj-mutate-manifest-end
