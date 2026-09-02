@@ -1,6 +1,13 @@
 (ns clj-mutate.workflow-spec
   (:require [speclj.core :refer :all]
+            [clj-mutate.backup :as backup]
+            [clj-mutate.cli :as cli]
+            [clj-mutate.coverage :as coverage]
             [clj-mutate.execution :as execution]
+            [clj-mutate.manifest :as manifest]
+            [clj-mutate.report :as report]
+            [clj-mutate.runner :as runner]
+            [clj-mutate.source :as source]
             [clj-mutate.workflow :as workflow]))
 
 (describe "run-mutation-suite"
@@ -8,67 +15,348 @@
     (with-redefs [execution/run-mutations-parallel (fn [& _] (throw (Exception. "should not run")))]
       (should= [] (workflow/run-mutation-suite [] "src/foo.cljc" "(ns foo)" 30000 nil "clj -M:spec")))))
 
-(describe "print-run-header"
-  (it "reports line filters and missing-manifest differential runs"
-    (let [header {:all-sites [{:line 3} {:line 8}]
-                  :covered-sites [{:line 3}]
-                  :uncovered [{:line 8}]
-                  :changed-mutation-sites 2
-                  :manifest-exists? false
-                  :module-hash-changed? nil
-                  :reuse-lcov false
-                  :coverage-status {:lcov-path "target/coverage/lcov.info"
-                                    :exists? false
-                                    :last-modified nil
-                                    :source-newer? false}
-                  :surface-area-counts {:new-form-mutations 2
-                                        :manifest-violating-form-mutations 0}}
-          output (with-out-str
-                   (workflow/print-run-header
-                     "src/foo.cljc"
-                     nil
-                     header
-                     #{3 8}
-                     true
-                     nil
-                     false
-                     [{:line 3}]
-                     50))]
-      (should-contain "=== Mutation Testing: src/foo.cljc ===" output)
-      (should-contain "Filtering to lines: 3,8 → 1 mutations to test." output)
-      (should-contain "No prior embedded manifest found; running all covered mutations." output)
-      (should-contain "Manifest exists: no" output)
-      (should-contain "Module hash changed: n/a" output)))
+(describe "run-mutation-testing embeds manifest"
+  (tags :no-mutate)
 
-  (it "reports reuse-lcov diagnostics when last-modified is absent"
-    (let [header {:all-sites []
-                  :covered-sites []
-                  :uncovered []
-                  :changed-mutation-sites 0
-                  :manifest-exists? true
-                  :module-hash-changed? false
-                  :reuse-lcov true
-                  :coverage-status {:lcov-path "target/coverage/lcov.info"
-                                    :exists? false
-                                    :last-modified nil
-                                    :source-newer? false}
-                  :surface-area-counts {:new-form-mutations 0
-                                        :manifest-violating-form-mutations 0}}
+  (it "writes the footer manifest after a full run"
+    (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
+          temp-path (.getPath temp-file)
+          original "(ns test-ns)\n(defn foo [] (+ 1 2))\n"]
+      (spit temp-path original)
+      (with-redefs [runner/run-specs (fn [& _] :killed)
+                    runner/run-specs-timed (fn [cmd]
+                                             (should= (cli/default-test-command) cmd)
+                                             {:result :survived :elapsed-ms 100})
+                    coverage/load-coverage (fn [& _] nil)
+                    execution/run-mutations-parallel
+                    (fn [sites source-path content timeout-ms max-workers test-command]
+                      (should= nil max-workers)
+                      (should= (cli/default-test-command) test-command)
+                      (doall (map (fn [site]
+                                    (execution/mutate-and-test source-path content nil site timeout-ms test-command))
+                                  sites)))]
+        (workflow/run-mutation-testing temp-path)
+        (let [updated (slurp temp-path)]
+          (should-not-be-nil (manifest/extract-embedded-manifest updated))
+          (should= (manifest/module-hash (source/read-source-forms (manifest/strip-mutation-metadata updated)))
+                   (:module-hash (manifest/extract-embedded-manifest updated)))
+          (should-contain "clj-mutate-manifest-begin" updated)))
+      (.delete temp-file)))
+
+  (it "reports previous mutation test date"
+    (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
+          temp-path (.getPath temp-file)
+          original (manifest/embed-mutation-manifest
+                     "(ns test-ns)\n(defn foo [] (+ 1 2))\n"
+                     {:version 1
+                      :tested-at "2026-01-15T09:30:00-06:00"
+                      :module-hash "module-123"
+                      :forms [{:id "form/0/ns" :hash "ns"}
+                              {:id "defn/foo" :hash "foo"}]})]
+      (spit temp-path original)
+      (with-redefs [runner/run-specs (fn [& _] :killed)
+                    runner/run-specs-timed (fn [cmd]
+                                             (should= (cli/default-test-command) cmd)
+                                             {:result :survived :elapsed-ms 100})
+                    coverage/load-coverage (fn [& _] nil)
+                    execution/run-mutations-parallel
+                    (fn [sites source-path content timeout-ms max-workers test-command]
+                      (should= nil max-workers)
+                      (should= (cli/default-test-command) test-command)
+                      (doall (map (fn [site]
+                                    (execution/mutate-and-test source-path content nil site timeout-ms test-command))
+                                  sites)))]
+        (let [captured (with-out-str
+                         (workflow/run-mutation-testing temp-path))]
+          (should-contain "Previous mutation test: 2026-01-15T09:30:00-06:00" captured)))
+      (.delete temp-file)))
+
+  (it "filters to changed top-level forms with --since-last-run"
+    (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
+          temp-path (.getPath temp-file)
+          initial "(ns test-ns)\n(defn unchanged [] (+ 1 2))\n(defn changed [] (+ 3 4))\n"
+          updated "(ns test-ns)\n(defn unchanged [] (+ 1 2))\n(defn changed [] (+ 30 4))\n(defn added [] (+ 5 6))\n"
+          prior-manifest (manifest/build-embedded-manifest (source/read-source-forms initial) "2026-02-20T08:00:00-06:00")
+          captured-sites (atom nil)]
+      (spit temp-path (manifest/embed-mutation-manifest updated prior-manifest))
+      (with-redefs [runner/run-specs (fn [& _] :killed)
+                    runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
+                    coverage/load-coverage (fn [& _] nil)
+                    workflow/mutation-run-context
+                    (fn [_ _ _]
+                      {:prev-date "2026-02-20T08:00:00-06:00"
+                       :prior-manifest prior-manifest
+                       :analysis-content updated
+                       :all-sites (source/discover-all-mutations (source/read-source-forms updated))
+                       :covered-sites (source/discover-all-mutations (source/read-source-forms updated))
+                       :uncovered []
+                       :module-unchanged? false
+                       :changed-forms #{2 3}
+                       :manifest-content (manifest/embed-mutation-manifest updated prior-manifest)
+                       :manifest-exists? true
+                       :module-hash-changed? true
+                       :changed-mutation-sites 4
+                       :surface-area-counts {:new-form-mutations 2
+                                             :manifest-violating-form-mutations 2}
+                       :coverage-status {:lcov-path "target/coverage/lcov.info"
+                                         :exists? true
+                                         :last-modified 123
+                                         :source-newer? true}})
+                    execution/run-mutations-parallel
+                    (fn [sites _ _ _ _ _]
+                      (reset! captured-sites sites)
+                      (mapv (fn [site] {:site site :result :killed :timeout? false}) sites))]
+        (let [output (with-out-str
+                       (workflow/run-mutation-testing temp-path nil 10 "clj -M:spec" nil true false 50 true))]
+          (should-contain "Total mutation sites: 4" output)
+          (should-contain "Covered mutation sites: 4" output)
+          (should-contain "Uncovered mutation sites: 0" output)
+          (should-contain "Changed mutation sites: 4" output)
+          (should-contain "Manifest exists: yes" output)
+          (should-contain "Module hash changed: yes" output)
+          (should-contain "Reusing existing LCOV data from target/coverage/lcov.info." output)
+          (should-contain "Warning: coverage may be stale; covered/uncovered site classification may be inaccurate." output)
+          (should-contain "LCOV exists: yes" output)
+          (should-contain "LCOV last modified: 123" output)
+          (should-contain "Target source newer than LCOV: yes" output)
+          (should-contain "Differential surface area: 2 mutations in new top-level forms" output)
+          (should-contain "Manifest-violating surface area: 2 mutations" output))
+        (should (seq @captured-sites))
+        (should= #{2 3} (set (map :form-index @captured-sites)))
+        (should (re-find #"\d{4}-\d{2}-\d{2}T" (:tested-at (manifest/extract-embedded-manifest (slurp temp-path))))))
+      (.delete temp-file)))
+
+  (it "short-circuits --since-last-run when the module hash is unchanged"
+    (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
+          temp-path (.getPath temp-file)
+          source "(ns test-ns)\n(defn unchanged [] (+ 1 2))\n"
+          prior-manifest (manifest/build-embedded-manifest (source/read-source-forms source) "2026-02-20T08:00:00-06:00")
+          source-with-manifest (manifest/embed-mutation-manifest source prior-manifest)
+          called? (atom false)]
+      (spit temp-path source-with-manifest)
+      (with-redefs [runner/run-specs (fn [& _] :killed)
+                    runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
+                    coverage/load-coverage (fn [& _] nil)
+                    execution/run-mutations-parallel
+                    (fn [& _]
+                      (reset! called? true)
+                      [])]
+        (let [output (with-out-str
+                       (workflow/run-mutation-testing temp-path nil 10 "clj -M:spec" nil true))]
+          (should= false @called?)
+          (should-contain "Total mutation sites: 2" output)
+          (should-contain "Covered mutation sites: 2" output)
+          (should-contain "Uncovered mutation sites: 0" output)
+          (should-contain "Changed mutation sites: 0" output)
+          (should-contain "Manifest exists: yes" output)
+          (should-contain "Module hash changed: no" output)
+          (should-contain "Module hash unchanged; no mutations to test." output)
+          (should-contain "Differential surface area: 0 mutations in new top-level forms" output)
+          (should-contain "Manifest-violating surface area: 0 mutations" output)))
+      (.delete temp-file)))
+
+  (it "defaults to differential mutation when a manifest exists"
+    (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
+          temp-path (.getPath temp-file)
+          initial "(ns test-ns)\n(defn unchanged [] (+ 1 2))\n(defn changed [] (+ 3 4))\n"
+          updated "(ns test-ns)\n(defn unchanged [] (+ 1 2))\n(defn changed [] (+ 30 4))\n"
+          prior-manifest (manifest/build-embedded-manifest (source/read-source-forms initial) "2026-02-20T08:00:00-06:00")
+          captured-sites (atom nil)]
+      (spit temp-path (manifest/embed-mutation-manifest updated prior-manifest))
+      (with-redefs [runner/run-specs (fn [& _] :killed)
+                    runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
+                    coverage/load-coverage (fn [& _] nil)
+                    execution/run-mutations-parallel
+                    (fn [sites _ _ _ _ _]
+                      (reset! captured-sites sites)
+                      (mapv (fn [site] {:site site :result :killed :timeout? false}) sites))]
+        (let [output (with-out-str (workflow/run-mutation-testing temp-path))]
+          (should (seq @captured-sites))
+          (should (every? #(= 2 (:form-index %)) @captured-sites))
+          (should-contain "Filtering to changed top-level forms" output)))
+      (.delete temp-file)))
+
+  (it "uses --mutate-all to override default differential mutation"
+    (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
+          temp-path (.getPath temp-file)
+          source "(ns test-ns)\n(defn foo [] (+ 1 2))\n"
+          prior-manifest (manifest/build-embedded-manifest (source/read-source-forms source) "2026-02-20T08:00:00-06:00")
+          captured-sites (atom nil)]
+      (spit temp-path (manifest/embed-mutation-manifest source prior-manifest))
+      (with-redefs [runner/run-specs (fn [& _] :killed)
+                    runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
+                    coverage/load-coverage (fn [& _] nil)
+                    execution/run-mutations-parallel
+                    (fn [sites _ _ _ _ _]
+                      (reset! captured-sites sites)
+                      (mapv (fn [site] {:site site :result :killed :timeout? false}) sites))]
+        (let [output (with-out-str
+                       (workflow/run-mutation-testing temp-path nil 10 "clj -M:spec" nil false true 50))]
+          (should= 2 (count @captured-sites))
+          (should-not (re-find #"changed top-level forms" output))))
+      (.delete temp-file)))
+
+  (it "prints a warning when mutation count exceeds the threshold"
+    (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
+          temp-path (.getPath temp-file)
+          source "(ns test-ns)\n(defn foo [] (+ 1 2))\n"]
+      (spit temp-path source)
+      (with-redefs [runner/run-specs (fn [& _] :killed)
+                    runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
+                    coverage/load-coverage (fn [& _] nil)
+                    execution/run-mutations-parallel
+                    (fn [sites _ _ _ _ _]
+                      (mapv (fn [site] {:site site :result :killed :timeout? false}) sites))]
+        (let [output (with-out-str
+                       (workflow/run-mutation-testing temp-path nil 10 "clj -M:spec" nil false false 1))]
+          (should-contain "WARNING: Found 2 mutations. Consider splitting this module." output)))
+      (.delete temp-file))))
+
+(describe "run-mutation-testing options"
+  (it "uses timeout-factor and test-command"
+    (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
+          temp-path (.getPath temp-file)
+          original "(ns test-ns)\n(defn foo [] (+ 1 2))\n"
+          captured-timeout (atom nil)
+          captured-command (atom nil)]
+      (spit temp-path original)
+      (with-redefs [runner/run-specs (fn [& _] :killed)
+                    runner/run-specs-timed (fn [cmd]
+                                             (reset! captured-command cmd)
+                                             {:result :survived :elapsed-ms 200})
+                    coverage/load-coverage (fn [& _] nil)
+                    execution/run-mutations-parallel
+                    (fn [sites _ _ timeout-ms _ test-command]
+                      (reset! captured-timeout timeout-ms)
+                      (reset! captured-command test-command)
+                      (mapv (fn [site] {:site site :result :killed :timeout? false}) sites))]
+        (workflow/run-mutation-testing temp-path nil 3 "clj -M:all-tests" nil)
+        (should= 600 @captured-timeout)
+        (should= "clj -M:all-tests" @captured-command))
+      (.delete temp-file))))
+
+(describe "run-mutation-testing arities"
+  (it "accepts a since-last-run argument without requiring mutate-all and mutation-warning"
+    (let [captured (atom nil)]
+      (with-redefs [backup/restore-from-backup! (fn [_] false)
+                    manifest/extract-embedded-manifest (fn [_] nil)
+                    workflow/mutation-run-context
+                    (fn [_ _ _]
+                      {:prev-date nil
+                       :prior-manifest nil
+                       :analysis-content "(ns test-ns)\n"
+                       :all-sites []
+                       :covered-sites []
+                       :uncovered []
+                       :module-unchanged? false
+                       :changed-forms #{}
+                       :manifest-content "(ns test-ns)\n"
+                       :manifest-exists? false
+                       :module-hash-changed? nil
+                       :changed-mutation-sites 0
+                       :surface-area-counts {:new-form-mutations 0
+                                             :manifest-violating-form-mutations 0}
+                       :coverage-status {:lcov-path "target/coverage/lcov.info"
+                                         :exists? false
+                                         :last-modified nil
+                                         :source-newer? false}})
+                    workflow/select-mutation-sites (fn [& _] [])
+                    report/print-run-header (fn [& _] nil)
+                    workflow/with-baseline (fn [test-command timeout-factor on-pass]
+                                             (reset! captured {:test-command test-command
+                                                               :timeout-factor timeout-factor})
+                                             (on-pass 100))
+                    report/print-uncovered (fn [_] nil)
+                    backup/save-backup! (fn [& _] nil)
+                    workflow/run-mutation-suite (fn [& _] [])
+                    report/summarize-results (fn [& _] nil)
+                    backup/cleanup-backup! (fn [& _] nil)
+                    spit (fn [& _] nil)
+                    slurp (fn [_] "(ns test-ns)\n")]
+        (workflow/run-mutation-testing "src/test.cljc" nil 7 "clj -M:custom" nil true)
+        (should= {:test-command "clj -M:custom"
+                  :timeout-factor 7}
+                 @captured)))))
+
+(describe "scan-mutation-sites"
+  (it "reports total and changed mutation sites with a warning"
+    (let [source "(ns test-ns)\n(defn foo [] (+ 1 2))\n"
+          prior (manifest/build-embedded-manifest (source/read-source-forms source)
+                                                  "2026-02-20T08:00:00-06:00")
+          updated "(ns test-ns)\n(defn foo [] (+ 1 20))\n"
+          content (manifest/embed-mutation-manifest updated prior)
           output (with-out-str
-                   (workflow/print-run-header
-                     "src/foo.cljc"
-                     "2026-01-01T00:00:00Z"
-                     header
-                     nil
-                     false
-                     {:module-hash "abc"}
-                     true
-                     []
-                     50))]
-      (should-contain "Previous mutation test: 2026-01-01T00:00:00Z" output)
-      (should-contain "Reusing existing LCOV data from target/coverage/lcov.info." output)
-      (should-contain "LCOV exists: no" output)
-      (should-contain "Target source newer than LCOV: no" output)
-      (should-not-contain "LCOV last modified:" output))))
+                   (with-redefs [slurp (fn [_] content)]
+                     (workflow/scan-mutation-sites "src/test.cljc" 1)))]
+      (should-contain "=== Mutation Scan: src/test.cljc ===" output)
+      (should-contain "Found 2 mutation sites." output)
+      (should-contain "Changed mutation sites: 2" output)
+      (should-contain "WARNING: Found 2 mutations. Consider splitting this module." output)))
+
+  (it "reports zero changed mutation sites when the module hash is unchanged"
+    (let [source "(ns test-ns)\n(defn foo [] (+ 1 2))\n"
+          prior (manifest/build-embedded-manifest (source/read-source-forms source)
+                                                  "2026-02-20T08:00:00-06:00")
+          content (manifest/embed-mutation-manifest source prior)
+          output (with-out-str
+                   (with-redefs [slurp (fn [_] content)]
+                     (workflow/scan-mutation-sites "src/test.cljc" 50)))]
+      (should-contain "Found 2 mutation sites." output)
+      (should-contain "Changed mutation sites: 0" output))))
+
+(describe "update-manifest!"
+  (it "rewrites the embedded manifest for the current file content"
+    (let [temp-file (java.io.File/createTempFile "manifest" ".cljc")
+          temp-path (.getPath temp-file)
+          original "(ns test-ns)\n(defn foo [] (+ 1 2))\n"
+          prior (manifest/build-embedded-manifest (source/read-source-forms original)
+                                                  "2026-02-20T08:00:00-06:00")
+          stamped (manifest/embed-mutation-manifest "(ns test-ns)\n(defn foo [] (+ 1 20))\n" prior)]
+      (spit temp-path stamped)
+      (with-redefs [manifest/now-str (fn [] "2026-03-12T12:00:00-05:00")]
+        (workflow/update-manifest! temp-path))
+      (let [updated (slurp temp-path)
+            embedded (manifest/extract-embedded-manifest updated)
+            analysis-content (manifest/strip-mutation-metadata updated)
+            forms (source/read-source-forms analysis-content)]
+        (should= "2026-03-12T12:00:00-05:00" (:tested-at embedded))
+        (should= (manifest/module-hash forms) (:module-hash embedded))
+        (should= (manifest/top-level-form-manifest forms) (:forms embedded)))
+      (.delete temp-file))))
+
+(describe "line numbers stable across stamp"
+  (tags :no-mutate)
+
+  (it "reported survivor lines from full run work with --lines"
+    (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
+          temp-path (.getPath temp-file)
+          original "(ns test-ns)\n(defn foo [] (+ 1 2))\n"]
+      (spit temp-path original)
+      (with-redefs [runner/run-specs (fn [& _] :survived)
+                    runner/run-specs-timed (fn [cmd]
+                                             (should= (cli/default-test-command) cmd)
+                                             {:result :survived :elapsed-ms 100})
+                    coverage/load-coverage (fn [& _] nil)
+                    execution/run-mutations-parallel
+                    (fn [sites source-path content timeout-ms max-workers test-command]
+                      (should= nil max-workers)
+                      (should= (cli/default-test-command) test-command)
+                      (let [results (doall (map-indexed
+                                             (fn [i site]
+                                               (let [r (execution/mutate-and-test source-path content nil site timeout-ms test-command)]
+                                                 (report/print-progress i (count sites) r site)
+                                                 r))
+                                             sites))]
+                        results))]
+        (let [output (with-out-str
+                       (workflow/run-mutation-testing temp-path))
+              plus-match (re-find #"L(\d+)\s+\+ -> -" output)
+              reported-line (when plus-match (parse-long (second plus-match)))]
+          (should-not-be-nil reported-line)
+          (let [lines-report (with-out-str
+                               (workflow/run-mutation-testing temp-path
+                                                              #{reported-line}))]
+            (should-contain "+ -> -" lines-report))))
+      (.delete temp-file))))
 
 (run-specs)

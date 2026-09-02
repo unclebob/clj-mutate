@@ -15,4 +15,6 @@
                          :task (speclj/-main "spec-bb/clj_mutate/runner_bb_spec.clj")}
          bb-spec:failing-replacements {:doc "Run alternate specs for JVM-only failures under Babashka"
                                        :requires ([speclj.main :as speclj])
-                                       :task (speclj/-main "spec-bb")}}}
+                                       :task (speclj/-main "spec-bb")}
+         property {:doc "Run property specs"
+                   :task (clojure "-M:property")}}}

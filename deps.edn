@@ -23,4 +23,8 @@
            :cov {:main-opts ["-m" "speclj.cloverage" "--" "-p" "src" "-s" "spec" "--lcov"]
                  :extra-deps {cloverage/cloverage {:mvn/version "1.2.4"}
                               speclj/speclj {:mvn/version "3.12.2"}}
-                 :extra-paths ["spec"]}}}
+                 :extra-paths ["spec"]}
+           :property {:main-opts ["-m" "speclj.main" "-c" "spec-property"]
+                      :extra-deps {speclj/speclj {:mvn/version "3.12.2"}
+                                   org.clojure/test.check {:mvn/version "1.1.1"}}
+                      :extra-paths ["spec-property"]}}}

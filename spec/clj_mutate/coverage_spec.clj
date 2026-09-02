@@ -14,42 +14,6 @@
        "DA:11,2\n"
        "end_of_record\n"))
 
-(describe "parse-lcov"
-  (it "parses LCOV text into map of file to covered line set"
-    (let [result (cov/parse-lcov sample-lcov)]
-      (should= #{1 3 5} (get result "src/empire/combat.cljc"))
-      (should= #{11} (get result "src/empire/game_loop.cljc"))))
-
-  (it "handles empty input and ignorable LCOV lines"
-    (doseq [[lcov-text assertions]
-            [[""
-              [#(should= {} %)]]
-             ["SF:foo.cljc\nDA:1,0\nDA:2,0\nend_of_record\n"
-              [#(should= #{} (get % "foo.cljc"))]]
-             ["DA:1,3\nSF:foo.cljc\nDA:2,4\nend_of_record\n"
-              [#(should= nil (get % nil))
-               #(should= #{2} (get % "foo.cljc"))]]
-             ["TN:\nSF:foo.cljc\nFN:1,bar\nDA:2,1\nend_of_record\n"
-              [#(should= #{2} (get % "foo.cljc"))]]
-             ["SF:foo.cljc\nDA:1,1\nDA:2,0\nend_of_record\nDA:9,7\n"
-              [#(should= #{1} (get % "foo.cljc"))]]]]
-      (let [result (cov/parse-lcov lcov-text)]
-        (should (seq assertions))
-        (doseq [assertion assertions]
-          (assertion result))))))
-
-(describe "covered-lines"
-  (it "returns covered lines for exact path match"
-    (let [lcov-map {"src/empire/combat.cljc" #{1 3 5}}]
-      (should= #{1 3 5} (cov/covered-lines lcov-map "src/empire/combat.cljc"))))
-
-  (it "returns covered lines for suffix match"
-    (let [lcov-map {"/abs/path/src/empire/combat.cljc" #{1 3 5}}]
-      (should= #{1 3 5} (cov/covered-lines lcov-map "src/empire/combat.cljc"))))
-
-  (it "returns nil when no match found"
-    (should-be-nil (cov/covered-lines {} "src/empire/combat.cljc"))))
-
 (describe "lcov-path"
   (it "returns the expected path"
     (should= "target/coverage/lcov.info" (cov/lcov-path))))

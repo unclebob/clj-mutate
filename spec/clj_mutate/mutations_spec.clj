@@ -1,7 +1,7 @@
 (ns clj-mutate.mutations-spec
   (:require [speclj.core :refer :all]
             [clj-mutate.mutations :as m]
-            [clj-mutate.core :as core]))
+            [clj-mutate.source :as source]))
 
 (defn site-pairs [sites]
   (set (map (juxt :original :mutant) sites)))
@@ -111,13 +111,13 @@
 
 (describe "line numbers"
   (it "attaches :line from reader metadata for symbols"
-    (let [forms (core/read-source-forms "(defn foo [] (+ 1 2))")
+    (let [forms (source/read-source-forms "(defn foo [] (+ 1 2))")
           sites (m/find-mutations (first forms))
           plus-site (first (filter #(= (:original %) '+) sites))]
       (should-not-be-nil (:line plus-site))))
 
   (it "attaches :line from parent metadata for literals"
-    (let [forms (core/read-source-forms "(defn foo [] (+ 1 2))")
+    (let [forms (source/read-source-forms "(defn foo [] (+ 1 2))")
           sites (m/find-mutations (first forms))
           one-site (first (filter #(= (:original %) 1) sites))]
       (should-not-be-nil (:line one-site))))
