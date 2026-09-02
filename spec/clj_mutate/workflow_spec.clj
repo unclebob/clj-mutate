@@ -7,6 +7,7 @@
             [clj-mutate.manifest :as manifest]
             [clj-mutate.report :as report]
             [clj-mutate.runner :as runner]
+            [clj-mutate.selection :as selection]
             [clj-mutate.source :as source]
             [clj-mutate.workflow :as workflow]))
 
@@ -29,7 +30,7 @@
                                              {:result :survived :elapsed-ms 100})
                     coverage/load-coverage (fn [& _] nil)
                     execution/run-mutations-parallel
-                    (fn [sites source-path content timeout-ms max-workers test-command]
+                    (fn [sites source-path content timeout-ms max-workers test-command & _]
                       (should= nil max-workers)
                       (should= (cli/default-test-command) test-command)
                       (doall (map (fn [site]
@@ -60,7 +61,7 @@
                                              {:result :survived :elapsed-ms 100})
                     coverage/load-coverage (fn [& _] nil)
                     execution/run-mutations-parallel
-                    (fn [sites source-path content timeout-ms max-workers test-command]
+                    (fn [sites source-path content timeout-ms max-workers test-command & _]
                       (should= nil max-workers)
                       (should= (cli/default-test-command) test-command)
                       (doall (map (fn [site]
@@ -103,7 +104,7 @@
                                          :last-modified 123
                                          :source-newer? true}})
                     execution/run-mutations-parallel
-                    (fn [sites _ _ _ _ _]
+                    (fn [sites _ _ _ _ _ & _]
                       (reset! captured-sites sites)
                       (mapv (fn [site] {:site site :result :killed :timeout? false}) sites))]
         (let [output (with-out-str
@@ -167,7 +168,7 @@
                     runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
                     coverage/load-coverage (fn [& _] nil)
                     execution/run-mutations-parallel
-                    (fn [sites _ _ _ _ _]
+                    (fn [sites _ _ _ _ _ & _]
                       (reset! captured-sites sites)
                       (mapv (fn [site] {:site site :result :killed :timeout? false}) sites))]
         (let [output (with-out-str (workflow/run-mutation-testing temp-path))]
@@ -187,7 +188,7 @@
                     runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
                     coverage/load-coverage (fn [& _] nil)
                     execution/run-mutations-parallel
-                    (fn [sites _ _ _ _ _]
+                    (fn [sites _ _ _ _ _ & _]
                       (reset! captured-sites sites)
                       (mapv (fn [site] {:site site :result :killed :timeout? false}) sites))]
         (let [output (with-out-str
@@ -205,7 +206,7 @@
                     runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
                     coverage/load-coverage (fn [& _] nil)
                     execution/run-mutations-parallel
-                    (fn [sites _ _ _ _ _]
+                    (fn [sites _ _ _ _ _ & _]
                       (mapv (fn [site] {:site site :result :killed :timeout? false}) sites))]
         (let [output (with-out-str
                        (workflow/run-mutation-testing temp-path nil 10 "clj -M:spec" nil false false 1))]
@@ -226,7 +227,7 @@
                                              {:result :survived :elapsed-ms 200})
                     coverage/load-coverage (fn [& _] nil)
                     execution/run-mutations-parallel
-                    (fn [sites _ _ timeout-ms _ test-command]
+                    (fn [sites _ _ timeout-ms _ test-command & _]
                       (reset! captured-timeout timeout-ms)
                       (reset! captured-command test-command)
                       (mapv (fn [site] {:site site :result :killed :timeout? false}) sites))]
@@ -260,7 +261,7 @@
                                          :exists? false
                                          :last-modified nil
                                          :source-newer? false}})
-                    workflow/select-mutation-sites (fn [& _] [])
+                    selection/select-mutation-sites (fn [& _] [])
                     report/print-run-header (fn [& _] nil)
                     workflow/with-baseline (fn [test-command timeout-factor on-pass]
                                              (reset! captured {:test-command test-command
@@ -338,7 +339,7 @@
                                              {:result :survived :elapsed-ms 100})
                     coverage/load-coverage (fn [& _] nil)
                     execution/run-mutations-parallel
-                    (fn [sites source-path content timeout-ms max-workers test-command]
+                    (fn [sites source-path content timeout-ms max-workers test-command & _]
                       (should= nil max-workers)
                       (should= (cli/default-test-command) test-command)
                       (let [results (doall (map-indexed

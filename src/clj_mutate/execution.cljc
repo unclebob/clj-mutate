@@ -1,6 +1,5 @@
 (ns clj-mutate.execution
-  (:require [clj-mutate.report :as report]
-            [clj-mutate.runner :as runner]
+  (:require [clj-mutate.runner :as runner]
             [clj-mutate.source :as source]
             [clj-mutate.workers :as workers]))
 
@@ -27,34 +26,37 @@
                       original-content site timeout-ms test-command worker-dir))
 
 (defn run-mutations-parallel
-  [sites source-path original-content timeout-ms max-workers test-command]
-  (let [run-base-dir (workers/new-run-base-dir worker-root-dir)
-        n-workers (max 1 (min (count sites)
-                              (.availableProcessors (Runtime/getRuntime))
-                              (or max-workers Integer/MAX_VALUE)))
-        worker-dirs (workers/create-worker-dirs!
-                      run-base-dir source-path original-content n-workers)
-        queue (java.util.concurrent.LinkedBlockingQueue. ^java.util.Collection (vec sites))
-        results (atom [])
-        counter (atom 0)
-        total (count sites)
-        lock (Object.)
-        futures (mapv
-                  (fn [dir]
-                    (future
-                      (loop []
-                        (when-let [site (.poll queue)]
-                          (let [r (mutate-and-test-in-dir dir source-path
-                                                          original-content site timeout-ms
-                                                          test-command)
-                                n (swap! counter inc)]
-                            (swap! results conj r)
-                            (locking lock
-                              (report/print-progress (dec n) total r site))
-                            (recur))))))
-                  worker-dirs)]
-    (try
-      (run! deref futures)
-      (vec (sort-by #(:index (:site %)) @results))
-      (finally
-        (workers/cleanup-worker-dirs! run-base-dir)))))
+  ([sites source-path original-content timeout-ms max-workers test-command]
+   (run-mutations-parallel sites source-path original-content timeout-ms max-workers test-command nil))
+  ([sites source-path original-content timeout-ms max-workers test-command on-progress]
+   (let [run-base-dir (workers/new-run-base-dir worker-root-dir)
+         n-workers (max 1 (min (count sites)
+                               (.availableProcessors (Runtime/getRuntime))
+                               (or max-workers Integer/MAX_VALUE)))
+         worker-dirs (workers/create-worker-dirs!
+                       run-base-dir source-path original-content n-workers)
+         queue (java.util.concurrent.LinkedBlockingQueue. ^java.util.Collection (vec sites))
+         results (atom [])
+         counter (atom 0)
+         total (count sites)
+         lock (Object.)
+         futures (mapv
+                   (fn [dir]
+                     (future
+                       (loop []
+                         (when-let [site (.poll queue)]
+                           (let [r (mutate-and-test-in-dir dir source-path
+                                                           original-content site timeout-ms
+                                                           test-command)
+                                 n (swap! counter inc)]
+                             (swap! results conj r)
+                             (when on-progress
+                               (locking lock
+                                 (on-progress (dec n) total r site)))
+                             (recur))))))
+                   worker-dirs)]
+     (try
+       (run! deref futures)
+       (vec (sort-by #(:index (:site %)) @results))
+       (finally
+         (workers/cleanup-worker-dirs! run-base-dir))))))

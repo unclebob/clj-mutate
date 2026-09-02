@@ -7,8 +7,8 @@
             [clj-mutate.lcov :as lcov]
             [clj-mutate.manifest :as manifest]
             [clj-mutate.mutations :as mutations]
-            [clj-mutate.source :as source]
-            [clj-mutate.workflow :as workflow]))
+            [clj-mutate.selection :as selection]
+            [clj-mutate.source :as source]))
 
 (defn- check
   [property]
@@ -130,7 +130,7 @@
                      has-manifest gen/boolean]
         (let [lines (when has-lines #{3})
               prior (when has-manifest {:module-hash "x"})
-              result (workflow/default-since-last-run? lines since mutate-all prior)]
+              result (selection/default-since-last-run? lines since mutate-all prior)]
           (= result
              (and (nil? lines)
                   (not mutate-all)

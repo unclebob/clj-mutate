@@ -158,3 +158,25 @@
                    (or (:line site) 0)
                    (:description site)))
   (flush))
+
+(defn print-baseline-start
+  []
+  (print "Baseline: ")
+  (flush))
+
+(defn print-baseline-pass
+  [elapsed-ms timeout-ms]
+  (println (format "PASS (%.1fs, timeout %.1fs)"
+                   (/ elapsed-ms 1000.0) (/ timeout-ms 1000.0))))
+
+(defn print-baseline-fail
+  []
+  (println "FAIL — specs do not pass without mutations. Aborting."))
+
+(defn print-backup-restored
+  []
+  (println "Restored source from backup (previous run was interrupted)."))
+
+(defn print-manifest-updated
+  [source-path]
+  (println (str "Updated manifest: " source-path)))

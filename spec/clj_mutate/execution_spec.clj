@@ -1,6 +1,7 @@
 (ns clj-mutate.execution-spec
   (:require [speclj.core :refer :all]
             [clj-mutate.execution :as execution]
+            [clj-mutate.report :as report]
             [clj-mutate.runner :as runner]
             [clj-mutate.source :as source]
             [clj-mutate.workers :as workers]))
@@ -30,7 +31,8 @@
                        "(ns foo)"
                        30000
                        nil
-                       "clj -M:spec")))]
+                       "clj -M:spec"
+                       report/print-progress)))]
       (should-contain "[  1/1] KILLED" output)
       (should-contain "L42" output)))
 

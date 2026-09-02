@@ -6,24 +6,8 @@
             [clj-mutate.project :as project]
             [clj-mutate.report :as report]
             [clj-mutate.runner :as runner]
+            [clj-mutate.selection :as selection]
             [clj-mutate.source :as source]))
-
-(declare count-changed-sites
-         differential-site-counts)
-
-(defn- filter-sites-by
-  [sites allowed-values key-fn]
-  (if allowed-values
-    (vec (filter #(contains? allowed-values (key-fn %)) sites))
-    sites))
-
-(defn filter-by-lines
-  [sites lines]
-  (filter-sites-by sites lines :line))
-
-(defn filter-by-form-indices
-  [sites form-indices]
-  (filter-sites-by sites form-indices :form-index))
 
 (defn mutation-run-context
   [source-path since-last-run reuse-lcov]
@@ -47,9 +31,9 @@
         coverage-status (coverage/coverage-status source-path)
         covered-lines (coverage/load-coverage source-path {:reuse-lcov reuse-lcov})
         [covered-sites uncovered] (source/partition-by-coverage all-sites covered-lines)
-        changed-mutation-sites (count-changed-sites all-sites prior-manifest forms)
+        changed-mutation-sites (selection/count-changed-sites all-sites prior-manifest forms)
         surface-counts (if manifest-exists?
-                         (differential-site-counts all-sites new-form-indices manifest-violating-form-indices)
+                         (selection/differential-site-counts all-sites new-form-indices manifest-violating-form-indices)
                          {:new-form-mutations (count all-sites)
                           :manifest-violating-form-mutations 0})]
     {:original-content original-content
@@ -69,31 +53,9 @@
      :uncovered uncovered
      :changed-mutation-sites changed-mutation-sites
      :surface-area-counts surface-counts
-     :sites nil
      :manifest-content (manifest/embed-mutation-manifest analysis-content
                                                         (manifest/build-embedded-manifest forms (manifest/now-str)))
      :changed-forms changed-form-indices}))
-
-(defn default-since-last-run?
-  [lines since-last-run mutate-all prior-manifest]
-  (and (nil? lines)
-       (not mutate-all)
-       (or since-last-run (some? prior-manifest))))
-
-(defn select-mutation-sites
-  [covered-sites lines since-last-run module-unchanged? changed-forms]
-  (cond
-    lines (filter-by-lines covered-sites lines)
-    module-unchanged? []
-    since-last-run (filter-by-form-indices covered-sites changed-forms)
-    :else covered-sites))
-
-(defn- count-changed-sites
-  [all-sites prior-manifest forms]
-  (cond
-    (nil? prior-manifest) (count all-sites)
-    (= (:module-hash prior-manifest) (manifest/module-hash forms)) 0
-    :else (count (filter-by-form-indices all-sites (manifest/changed-form-indices forms prior-manifest)))))
 
 (defn scan-mutation-sites
   [source-path mutation-warning]
@@ -103,37 +65,30 @@
         analysis-content (manifest/strip-mutation-metadata content)
         forms (source/read-source-forms analysis-content)
         all-sites (source/discover-all-mutations forms)
-        changed-sites (count-changed-sites all-sites prior-manifest forms)]
+        changed-sites (selection/count-changed-sites all-sites prior-manifest forms)]
     (report/print-scan-report source-path prev-date (count all-sites) changed-sites mutation-warning)))
-
-(defn differential-site-counts
-  [sites new-form-indices manifest-violating-form-indices]
-  {:new-form-mutations (count (filter #(contains? new-form-indices (:form-index %)) sites))
-   :manifest-violating-form-mutations (count (filter #(contains? manifest-violating-form-indices (:form-index %)) sites))})
 
 (defn run-mutation-suite
   [sites source-path analysis-content timeout-ms max-workers test-command]
   (if (seq sites)
-    (execution/run-mutations-parallel sites source-path analysis-content timeout-ms max-workers test-command)
+    (execution/run-mutations-parallel sites source-path analysis-content timeout-ms max-workers test-command report/print-progress)
     []))
 
 (defn with-baseline
   [test-command timeout-factor on-pass]
-  (print "Baseline: ")
-  (flush)
+  (report/print-baseline-start)
   (let [{baseline-result :result elapsed-ms :elapsed-ms} (runner/run-specs-timed test-command)
         timeout-ms (* timeout-factor elapsed-ms)]
     (if (= :survived baseline-result)
       (do
-        (println (format "PASS (%.1fs, timeout %.1fs)"
-                         (/ elapsed-ms 1000.0) (/ timeout-ms 1000.0)))
+        (report/print-baseline-pass elapsed-ms timeout-ms)
         (on-pass timeout-ms))
-      (println "FAIL — specs do not pass without mutations. Aborting."))))
+      (report/print-baseline-fail))))
 
 (defn update-manifest!
   [source-path]
   (when (backup/restore-from-backup! source-path)
-    (println "Restored source from backup (previous run was interrupted)."))
+    (report/print-backup-restored))
   (let [content (slurp source-path)
         analysis-content (manifest/strip-mutation-metadata content)
         forms (source/read-source-forms analysis-content)
@@ -141,7 +96,7 @@
                            analysis-content
                            (manifest/build-embedded-manifest forms (manifest/now-str)))]
     (spit source-path manifest-content)
-    (println (str "Updated manifest: " source-path))))
+    (report/print-manifest-updated source-path)))
 
 (defn run-mutation-testing
   ([source-path] (run-mutation-testing source-path nil 10 (project/default-test-command) nil false false 100 false))
@@ -154,15 +109,15 @@
    (run-mutation-testing source-path lines timeout-factor test-command max-workers since-last-run mutate-all mutation-warning false))
   ([source-path lines timeout-factor test-command max-workers since-last-run mutate-all mutation-warning reuse-lcov]
    (when (backup/restore-from-backup! source-path)
-     (println "Restored source from backup (previous run was interrupted)."))
+     (report/print-backup-restored))
    (let [manifest-detected? (some? (manifest/extract-embedded-manifest (slurp source-path)))
-         effective-since-last-run (default-since-last-run? lines since-last-run mutate-all manifest-detected?)
+         effective-since-last-run (selection/default-since-last-run? lines since-last-run mutate-all manifest-detected?)
          {:keys [prev-date prior-manifest analysis-content all-sites covered-sites uncovered
                  module-unchanged? changed-forms manifest-content
                  manifest-exists? module-hash-changed? changed-mutation-sites surface-area-counts
                  coverage-status]}
          (mutation-run-context source-path effective-since-last-run reuse-lcov)
-         sites (select-mutation-sites covered-sites lines effective-since-last-run module-unchanged? changed-forms)]
+         sites (selection/select-mutation-sites covered-sites lines effective-since-last-run module-unchanged? changed-forms)]
      (report/print-run-header source-path prev-date {:all-sites all-sites
                                                      :covered-sites covered-sites
                                                      :uncovered uncovered

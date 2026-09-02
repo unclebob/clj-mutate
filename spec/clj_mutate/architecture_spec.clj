@@ -11,18 +11,19 @@
     clj-mutate.report #{}
     clj-mutate.manifest #{}
     clj-mutate.source #{clj-mutate.mutations}
+    clj-mutate.selection #{clj-mutate.manifest}
     clj-mutate.cli #{clj-mutate.project}
     clj-mutate.coverage #{clj-mutate.lcov clj-mutate.project}
     clj-mutate.runner #{clj-mutate.project}
     clj-mutate.workers #{clj-mutate.project}
-    clj-mutate.execution #{clj-mutate.report clj-mutate.runner clj-mutate.source clj-mutate.workers}
+    clj-mutate.execution #{clj-mutate.runner clj-mutate.source clj-mutate.workers}
     clj-mutate.workflow #{clj-mutate.backup clj-mutate.coverage clj-mutate.execution
                           clj-mutate.manifest clj-mutate.project clj-mutate.report
-                          clj-mutate.runner clj-mutate.source}
+                          clj-mutate.runner clj-mutate.selection clj-mutate.source}
     clj-mutate.core #{clj-mutate.cli clj-mutate.workflow}})
 
 (def far-from-io
-  '#{clj-mutate.mutations clj-mutate.lcov clj-mutate.manifest clj-mutate.source clj-mutate.report})
+  '#{clj-mutate.mutations clj-mutate.lcov clj-mutate.manifest clj-mutate.source clj-mutate.selection clj-mutate.report})
 
 (defn- source-files
   []
