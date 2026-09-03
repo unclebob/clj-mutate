@@ -32,20 +32,32 @@
   (or (rand-nth-guard-form? parent)
       (rand-nth-guard-form? grandparent)))
 
+(defn- rand-nth-form?
+  [form]
+  (and (seq? form) (= 'rand-nth (first form))))
+
 (defn- inside-rand-nth-literal?
   "True for constants inside (rand-nth [...]). Pool values are equivalent.
    Handles both flat (rand-nth [0 1]) and nested (rand-nth [[-1 0] [1 0]])."
-  [{:keys [parent grandparent]}]
+  [{:keys [parent grandparent great-grandparent]}]
   (and (vector? parent)
-       (or (and (seq? grandparent) (= 'rand-nth (first grandparent)))
+       (or (rand-nth-form? grandparent)
            (and (vector? grandparent)
-                (every? #(and (vector? %) (every? number? %)) grandparent)))))
+                (every? #(and (vector? %) (every? number? %)) grandparent)
+                (rand-nth-form? great-grandparent)))))
+
+(defn- count-form?
+  [form]
+  (and (seq? form) (= 'count (first form))))
 
 (defn- subvec-trim-boundary?
   "True for > -> >= inside (if (> (count v) N) (subvec ...) v).
    Off-by-one at subvec boundary is equivalent."
-  [{:keys [grandparent]}]
-  (and (seq? grandparent)
+  [{:keys [parent grandparent]}]
+  (and (seq? parent)
+       (or (= '> (first parent)) (= '>= (first parent)))
+       (some count-form? (rest parent))
+       (seq? grandparent)
        (let [head (first grandparent)]
          (and (or (= 'if head) (= 'if-not head))
               (>= (count grandparent) 4)
@@ -100,14 +112,14 @@
 
 (defn- walk-children
   "Recurse into child nodes of any collection type."
-  [walk-fn parent node nearest-location]
+  [walk-fn grandparent parent node nearest-location]
   (cond
-    (seq? node) (doseq [child node] (walk-fn parent node child nearest-location))
-    (vector? node) (doseq [child node] (walk-fn parent node child nearest-location))
+    (seq? node) (doseq [child node] (walk-fn grandparent parent node child nearest-location))
+    (vector? node) (doseq [child node] (walk-fn grandparent parent node child nearest-location))
     (map? node) (doseq [[k v] node]
-                  (walk-fn parent node k nearest-location)
-                  (walk-fn parent node v nearest-location))
-    (set? node) (doseq [child node] (walk-fn parent node child nearest-location))))
+                  (walk-fn grandparent parent node k nearest-location)
+                  (walk-fn grandparent parent node v nearest-location))
+    (set? node) (doseq [child node] (walk-fn grandparent parent node child nearest-location))))
 
 (defn find-mutations
   "Walk form tree, return vector of mutation sites.
@@ -118,11 +130,13 @@
   [form]
   (let [counter (atom 0)
         sites (atom [])]
-    (letfn [(walk [grandparent parent node nearest-location]
+    (letfn [(walk [great-grandparent grandparent parent node nearest-location]
               (let [site-location (or (source-location node)
                                       (source-location parent)
                                       nearest-location)
-                    context {:parent parent :grandparent grandparent}]
+                    context {:parent parent
+                             :grandparent grandparent
+                             :great-grandparent great-grandparent}]
                 (when-let [rule (first-matching-rule context node)]
                   (swap! sites conj {:index @counter
                                      :original (:original rule)
@@ -132,18 +146,18 @@
                                      :column (:column site-location)
                                      :description (str (:original rule) " -> " (:mutant rule))})
                   (swap! counter inc))
-                (walk-children walk parent node site-location)))]
-      (walk nil nil form nil))
+                (walk-children walk grandparent parent node site-location)))]
+      (walk nil nil nil form nil))
     @sites))
 
 (defn- rebuild-coll
   "Rebuild a collection after walking its children."
-  [walk-fn grandparent parent node]
+  [walk-fn great-grandparent grandparent parent node]
   (cond
-    (seq? node) (apply list (map #(walk-fn parent node %) node))
-    (vector? node) (mapv #(walk-fn parent node %) node)
-    (map? node) (into {} (map (fn [[k v]] [(walk-fn parent node k) (walk-fn parent node v)]) node))
-    (set? node) (into #{} (map #(walk-fn parent node %) node))
+    (seq? node) (apply list (map #(walk-fn grandparent parent node %) node))
+    (vector? node) (mapv #(walk-fn grandparent parent node %) node)
+    (map? node) (into {} (map (fn [[k v]] [(walk-fn grandparent parent node k) (walk-fn grandparent parent node v)]) node))
+    (set? node) (into #{} (map #(walk-fn grandparent parent node %) node))
     :else node))
 
 (defn apply-mutation
@@ -154,8 +168,10 @@
    grandparent tracking, or suppression logic must be mirrored in both."
   [form target-index]
   (let [counter (atom 0)]
-    (letfn [(walk [grandparent parent node]
-              (let [context {:parent parent :grandparent grandparent}]
+    (letfn [(walk [great-grandparent grandparent parent node]
+              (let [context {:parent parent
+                             :grandparent grandparent
+                             :great-grandparent great-grandparent}]
                 (if-let [rule (first-matching-rule context node)]
                   (let [idx @counter]
                     (swap! counter inc)
@@ -163,11 +179,11 @@
                       (if (seq? node)
                         (let [mutant (:mutant rule)
                               new-parent (cons mutant (rest node))]
-                          (apply list mutant (map #(walk parent new-parent %) (rest node))))
+                          (apply list mutant (map #(walk grandparent parent new-parent %) (rest node))))
                         (:mutant rule))
-                      (rebuild-coll walk grandparent parent node)))
-                  (rebuild-coll walk grandparent parent node))))]
-      (walk nil nil form))))
+                      (rebuild-coll walk great-grandparent grandparent parent node)))
+                  (rebuild-coll walk great-grandparent grandparent parent node))))]
+      (walk nil nil nil form))))
 
 ;; clj-mutate-manifest-begin
 ;; {:version 1, :tested-at "2026-09-02T15:18:15.376053-05:00", :module-hash "-1127075494", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line nil, :hash "-739386167"} {:id "defn-/rand-comparison?", :kind "defn-", :line 3, :end-line nil, :hash "2022929343"} {:id "defn-/rand-nth-guard-form?", :kind "defn-", :line 13, :end-line nil, :hash "-139674048"} {:id "defn-/rand-nth-single-element-guard?", :kind "defn-", :line 28, :end-line nil, :hash "1173485497"} {:id "defn-/inside-rand-nth-literal?", :kind "defn-", :line 35, :end-line nil, :hash "1589709826"} {:id "defn-/subvec-trim-boundary?", :kind "defn-", :line 44, :end-line nil, :hash "-1009745996"} {:id "def/rules", :kind "def", :line 56, :end-line nil, :hash "-771035529"} {:id "defn/matches-rule?", :kind "defn", :line 77, :end-line nil, :hash "-2052468963"} {:id "defn-/first-matching-rule", :kind "defn-", :line 91, :end-line nil, :hash "1336048703"} {:id "defn-/source-location", :kind "defn-", :line 94, :end-line nil, :hash "-1678202097"} {:id "defn-/walk-children", :kind "defn-", :line 101, :end-line nil, :hash "-2050838588"} {:id "defn/find-mutations", :kind "defn", :line 112, :end-line nil, :hash "-944920387"} {:id "defn-/rebuild-coll", :kind "defn-", :line 139, :end-line nil, :hash "-13400637"} {:id "defn/apply-mutation", :kind "defn", :line 149, :end-line nil, :hash "260453480"}]}

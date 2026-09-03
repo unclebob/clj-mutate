@@ -20,13 +20,16 @@
         module-unchanged? (and since-last-run
                                prior-manifest
                                (= current-module-hash (:module-hash prior-manifest)))
-        module-hash-changed? (when manifest-exists? (not module-unchanged?))
-        {:keys [new-form-indices manifest-violating-form-indices changed-form-indices]}
-        (if (and since-last-run prior-manifest (not module-unchanged?))
-          (manifest/changed-form-indices-by-reason forms prior-manifest)
-          {:new-form-indices #{}
-           :manifest-violating-form-indices #{}
-           :changed-form-indices nil})
+        module-hash-changed? (when manifest-exists?
+                               (not= current-module-hash (:module-hash prior-manifest)))
+        by-reason (when prior-manifest
+                    (manifest/changed-form-indices-by-reason forms prior-manifest))
+        new-form-indices (or (:new-form-indices by-reason) #{})
+        manifest-violating-form-indices (or (:manifest-violating-form-indices by-reason) #{})
+        changed-form-indices (cond
+                               (not since-last-run) nil
+                               module-unchanged? #{}
+                               :else (:changed-form-indices by-reason))
         all-sites (source/discover-all-mutations forms)
         coverage-status (coverage/coverage-status source-path)
         covered-lines (coverage/load-coverage source-path {:reuse-lcov reuse-lcov})
@@ -98,6 +101,16 @@
     (spit source-path manifest-content)
     (report/print-manifest-updated source-path)))
 
+(defn write-manifest?
+  "True when this run fully tested the selected covered sites with no survivors
+   and no uncovered sites remaining. --lines reruns and empty runs must not
+   stamp a new baseline."
+  [lines sites results uncovered]
+  (and (nil? lines)
+       (seq sites)
+       (every? #(= :killed (:result %)) results)
+       (empty? uncovered)))
+
 (defn run-mutation-testing
   ([source-path] (run-mutation-testing source-path nil 10 (project/default-test-command) nil false false 100 false))
   ([source-path lines] (run-mutation-testing source-path lines 10 (project/default-test-command) nil false false 100 false))
@@ -110,10 +123,10 @@
   ([source-path lines timeout-factor test-command max-workers since-last-run mutate-all mutation-warning reuse-lcov]
    (when (backup/restore-from-backup! source-path)
      (report/print-backup-restored))
-   (let [manifest-detected? (some? (manifest/extract-embedded-manifest (slurp source-path)))
-         effective-since-last-run (selection/default-since-last-run? lines since-last-run mutate-all manifest-detected?)
+   (let [prior-manifest-or-nil (manifest/extract-embedded-manifest (slurp source-path))
+         effective-since-last-run (selection/default-since-last-run? lines since-last-run mutate-all prior-manifest-or-nil)
          {:keys [prev-date prior-manifest analysis-content all-sites covered-sites uncovered
-                 module-unchanged? changed-forms manifest-content
+                 module-unchanged? changed-forms manifest-content original-content
                  manifest-exists? module-hash-changed? changed-mutation-sites surface-area-counts
                  coverage-status]}
          (mutation-run-context source-path effective-since-last-run reuse-lcov)
@@ -134,14 +147,16 @@
        (fn [timeout-ms]
          (when-not (or lines effective-since-last-run)
            (report/print-uncovered uncovered))
-         (backup/save-backup! source-path manifest-content)
+         (when original-content
+           (backup/save-backup! source-path original-content))
          (try
            (let [results (run-mutation-suite sites source-path analysis-content timeout-ms max-workers test-command)]
              (report/summarize-results results
                                        lines
                                        effective-since-last-run
                                        uncovered)
-             (spit source-path manifest-content))
+             (when (write-manifest? lines sites results uncovered)
+               (spit source-path manifest-content)))
            (finally
              (backup/cleanup-backup! source-path))))))))
 

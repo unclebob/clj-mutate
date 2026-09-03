@@ -95,7 +95,13 @@
                       [temp-source-path "--update-manifest" "--mutate-all"]
                       [temp-source-path "--update-manifest" "--timeout-factor" "7"]
                       [temp-source-path "--update-manifest" "--test-command" "clj -M:all-tests"]
-                      [temp-source-path "--update-manifest" "--max-workers" "2"]]]
+                      [temp-source-path "--update-manifest" "--max-workers" "2"]
+                      [temp-source-path "--timeout-factor" "10" "--scan"]
+                      [temp-source-path "--test-command" (project/default-test-command) "--scan"]
+                      [temp-source-path "--scan" "--reuse-lcov"]
+                      [temp-source-path "--reuse-lcov" "--scan"]
+                      [temp-source-path "--update-manifest" "--reuse-lcov"]
+                      [temp-source-path "--reuse-lcov" "--update-manifest"]]]
           (should-contain :error (cli/validate-args args)))))))
 
 (run-specs)

@@ -53,13 +53,15 @@
    mutated file is a real file."
   [base-dir source-rel-path original-content n]
   (let [project-root (System/getProperty "user.dir")
-        config (project/config-file project-root)]
+        configs (project/config-files project-root)]
     (vec
       (for [i (range n)]
         (let [dir-path (str base-dir "/worker-" i)]
           (.mkdirs (File. dir-path))
-          (spit (str dir-path "/" config)
-                (slurp (str project-root "/" config)))
+          (doseq [config configs]
+            (let [src (File. (str project-root "/" config))]
+              (when (.exists src)
+                (spit (str dir-path "/" config) (slurp src)))))
           (symlink! (str dir-path "/spec")
                     (str project-root "/spec"))
           (setup-source-overlay! dir-path project-root

@@ -102,7 +102,8 @@
                        :coverage-status {:lcov-path "target/coverage/lcov.info"
                                          :exists? true
                                          :last-modified 123
-                                         :source-newer? true}})
+                                         :source-newer? true}
+                       :original-content updated})
                     execution/run-mutations-parallel
                     (fn [sites _ _ _ _ _ & _]
                       (reset! captured-sites sites)
@@ -153,7 +154,8 @@
           (should-contain "Module hash changed: no" output)
           (should-contain "Module hash unchanged; no mutations to test." output)
           (should-contain "Differential surface area: 0 mutations in new top-level forms" output)
-          (should-contain "Manifest-violating surface area: 0 mutations" output)))
+          (should-contain "Manifest-violating surface area: 0 mutations" output)
+          (should= source-with-manifest (slurp temp-path))))
       (.delete temp-file)))
 
   (it "defaults to differential mutation when a manifest exists"
@@ -260,7 +262,8 @@
                        :coverage-status {:lcov-path "target/coverage/lcov.info"
                                          :exists? false
                                          :last-modified nil
-                                         :source-newer? false}})
+                                         :source-newer? false}
+                       :original-content "(ns test-ns)\n"})
                     selection/select-mutation-sites (fn [& _] [])
                     report/print-run-header (fn [& _] nil)
                     workflow/with-baseline (fn [test-command timeout-factor on-pass]
@@ -354,10 +357,60 @@
               plus-match (re-find #"L(\d+)\s+\+ -> -" output)
               reported-line (when plus-match (parse-long (second plus-match)))]
           (should-not-be-nil reported-line)
+          (should= original (slurp temp-path))
           (let [lines-report (with-out-str
                                (workflow/run-mutation-testing temp-path
                                                               #{reported-line}))]
-            (should-contain "+ -> -" lines-report))))
+            (should-contain "+ -> -" lines-report)
+            (should= original (slurp temp-path)))))
+      (.delete temp-file))))
+
+(describe "write-manifest?"
+  (it "writes only after a complete kill with no uncovered sites"
+    (let [killed [{:result :killed}]
+          survived [{:result :survived}]]
+      (should (workflow/write-manifest? nil [{:index 0}] killed []))
+      (should-not (workflow/write-manifest? #{2} [{:index 0}] killed []))
+      (should-not (workflow/write-manifest? nil [] killed []))
+      (should-not (workflow/write-manifest? nil [{:index 0}] survived []))
+      (should-not (workflow/write-manifest? nil [{:index 0}] killed [{:line 9}])))))
+
+(describe "run-mutation-testing first run reporting"
+  (tags :no-mutate)
+
+  (it "prints uncovered sites when no footer exists"
+    (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
+          temp-path (.getPath temp-file)
+          original "(ns test-ns)\n(defn foo [] (+ 1 2))\n(defn bar [] (> x 0))\n"]
+      (spit temp-path original)
+      (with-redefs [runner/run-specs (fn [& _] :killed)
+                    runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
+                    coverage/load-coverage (fn [& _] #{2})
+                    execution/run-mutations-parallel
+                    (fn [sites _ _ _ _ _ & _]
+                      (mapv (fn [site] {:site site :result :killed :timeout? false}) sites))]
+        (let [output (with-out-str
+                       (workflow/run-mutation-testing temp-path))]
+          (should-contain "Coverage Gaps" output)
+          (should= original (slurp temp-path))))
+      (.delete temp-file)))
+
+  (it "backs up the original file contents, not the next footer"
+    (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
+          temp-path (.getPath temp-file)
+          original "(ns test-ns)\n(defn foo [] (+ 1 2))\n"
+          captured (atom nil)]
+      (spit temp-path original)
+      (with-redefs [runner/run-specs (fn [& _] :killed)
+                    runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
+                    coverage/load-coverage (fn [& _] nil)
+                    backup/save-backup! (fn [_ content] (reset! captured content))
+                    execution/run-mutations-parallel
+                    (fn [sites _ _ _ _ _ & _]
+                      (mapv (fn [site] {:site site :result :killed :timeout? false}) sites))]
+        (workflow/run-mutation-testing temp-path)
+        (should= original @captured)
+        (should-not-contain "clj-mutate-manifest-begin" @captured))
       (.delete temp-file))))
 
 (run-specs)

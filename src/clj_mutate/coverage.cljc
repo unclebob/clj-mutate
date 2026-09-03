@@ -4,8 +4,6 @@
             [clojure.java.shell :as shell])
   (:import [java.io File]))
 
-(declare stale-reason)
-
 (defn lcov-path
   "Return the path to the LCOV info file."
   []
@@ -81,11 +79,24 @@
    (load-coverage source-path {}))
   ([source-path options]
    (let [reuse-lcov (:reuse-lcov options false)
-         lcov-file (File. (lcov-path))]
-     (if (project/bb-project?)
-       (covered-lines-from-lcov lcov-file source-path)
+         lcov-file (File. (lcov-path))
+         reason (stale-reason lcov-file source-path)]
+     (cond
+       (and reuse-lcov (= :missing reason))
+       (throw (ex-info "LCOV reuse requested, but target/coverage/lcov.info is missing."
+                       {:source-path source-path
+                        :lcov-path (lcov-path)
+                        :reason :missing-lcov-for-reuse}))
+
+       (project/running-on-babashka?)
        (do
-         (when-let [reason (stale-reason lcov-file source-path)]
+         (when (and reuse-lcov (= :stale reason))
+           (println "Reusing existing LCOV data from target/coverage/lcov.info even though it is stale."))
+         (covered-lines-from-lcov lcov-file source-path))
+
+       :else
+       (do
+         (when reason
            (reuse-or-refresh-coverage! reason source-path reuse-lcov))
          (covered-lines-from-lcov lcov-file source-path))))))
 

@@ -23,7 +23,7 @@
         (should= 2 (count dirs))
         (doseq [dir dirs]
           (should (.exists (File. dir)))
-          (let [config (if (.exists (File. "bb.edn")) "bb.edn" "deps.edn")]
+          (doseq [config (filter #(.exists (File. %)) ["bb.edn" "deps.edn"])]
             (should (.exists (File. (str dir "/" config))))
             (should-not (Files/isSymbolicLink (.toPath (File. (str dir "/" config))))))
           (should= original-content (slurp (str dir "/" source-rel))))

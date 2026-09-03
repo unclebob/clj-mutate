@@ -42,10 +42,10 @@
       (should (some #(and (= (:original %) 0) (= (:category %) :constant)) sites))))
 
   (it "returns empty vector for form with no matches"
-    (should= [] (m/find-mutations '(foo bar baz)))))
+    (should= [] (m/find-mutations '(foo bar baz))))
 
   (it "returns empty vector when walking a literal with no mutation sites"
-    (should= [] (m/find-mutations :literal)))
+    (should= [] (m/find-mutations :literal))))
 
 (describe "equivalent mutant suppression"
   (it "suppresses rand-based comparison mutations"
@@ -95,7 +95,9 @@
 
   (it "does not suppress literal-pool mutations outside rand-nth"
     (doseq [form ['(+ x 0)
-                  '(let [x 0] (+ x 1))]]
+                  '(let [x 0] (+ x 1))
+                  '[[-1 0] [1 0]]
+                  '(let [dirs [[-1 0] [1 0]]] dirs)]]
       (let [sites (m/find-mutations form)]
         (should (has-site? 0 1 sites))))))
 
@@ -107,6 +109,10 @@
 
   (it "does not suppress > -> >= in non-subvec contexts"
     (let [sites (m/find-mutations '(if (> x 10) :a :b))]
+      (should (has-site? '> '>= sites))))
+
+  (it "does not suppress > when the then-branch is subvec but the test is not count"
+    (let [sites (m/find-mutations '(if (> x 10) (subvec v 0 x) v))]
       (should (has-site? '> '>= sites)))))
 
 (describe "line numbers"
@@ -156,23 +162,23 @@
 
 (describe "rebuild-coll"
   (it "rebuilds collections by walking each child"
-    (let [increment-numbers (fn [_ _ node] (if (number? node) (inc node) node))]
+    (let [increment-numbers (fn [_ _ _ node] (if (number? node) (inc node) node))]
       (doseq [[input expected]
               [['(+ 1 2) '(+ 2 3)]
                [[1 2] [2 3]]
                [#{1 2} #{2 3}]]]
-        (should= expected (#'m/rebuild-coll increment-numbers nil nil input)))))
+        (should= expected (#'m/rebuild-coll increment-numbers nil nil nil input)))))
 
   (it "rebuilds maps by walking keys and values"
-    (let [walk (fn [_ _ node]
+    (let [walk (fn [_ _ _ node]
                  (cond
                    (= node :a) :b
                    (= node 1) 2
                    :else node))]
-      (should= {:b 2} (#'m/rebuild-coll walk nil nil {:a 1}))))
+      (should= {:b 2} (#'m/rebuild-coll walk nil nil nil {:a 1}))))
 
   (it "returns non-collections unchanged"
-    (let [walk (fn [_ _ node] (if (number? node) (inc node) node))]
-      (should= 42 (#'m/rebuild-coll walk nil nil 42)))))
+    (let [walk (fn [_ _ _ node] (if (number? node) (inc node) node))]
+      (should= 42 (#'m/rebuild-coll walk nil nil nil 42)))))
 
 (run-specs)

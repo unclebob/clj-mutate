@@ -39,7 +39,7 @@
                                         (spit temp-lcov sample-lcov)
                                         true)
                     cov/lcov-path (constantly temp-lcov)
-                    clj-mutate.project/bb-project? (constantly false)]
+                    clj-mutate.project/running-on-babashka? (constantly false)]
         (java.nio.file.Files/deleteIfExists
           (.toPath (java.io.File. temp-lcov)))
         (let [result (cov/load-coverage "src/empire/combat.cljc")]
@@ -53,7 +53,7 @@
       (with-redefs [cov/run-coverage! (fn [] (reset! ran? true) true)
                     cov/lcov-path (constantly temp-lcov)
                     cov/stale-reason (fn [_ _] :stale)
-                    clj-mutate.project/bb-project? (constantly false)]
+                    clj-mutate.project/running-on-babashka? (constantly false)]
         (let [result (cov/load-coverage "src/empire/combat.cljc" {:reuse-lcov true})]
           (should= false @ran?)
           (should= #{1 3 5} result)))
@@ -65,7 +65,16 @@
       (with-redefs [cov/run-coverage! (fn [] (throw (Exception. "should not run")))
                     cov/lcov-path (constantly temp-lcov)
                     cov/stale-reason (fn [_ _] :missing)
-                    clj-mutate.project/bb-project? (constantly false)]
+                    clj-mutate.project/running-on-babashka? (constantly false)]
+        (should-throw clojure.lang.ExceptionInfo
+                      (cov/load-coverage "src/empire/combat.cljc" {:reuse-lcov true})))))
+
+  (it "fails clearly when reuse-lcov is requested and lcov is missing on Babashka"
+    (let [temp-lcov (str "/tmp/missing-reuse-lcov-bb-" (System/nanoTime) ".info")]
+      (with-redefs [cov/run-coverage! (fn [] (throw (Exception. "should not run")))
+                    cov/lcov-path (constantly temp-lcov)
+                    cov/stale-reason (fn [_ _] :missing)
+                    clj-mutate.project/running-on-babashka? (constantly true)]
         (should-throw clojure.lang.ExceptionInfo
                       (cov/load-coverage "src/empire/combat.cljc" {:reuse-lcov true})))))
 
@@ -82,7 +91,7 @@
           temp-lcov (str "/tmp/test-lcov-bb-" (System/nanoTime) ".info")]
       (with-redefs [cov/run-coverage! (fn [] (reset! ran? true) true)
                     cov/lcov-path (constantly temp-lcov)
-                    clj-mutate.project/bb-project? (constantly true)]
+                    clj-mutate.project/running-on-babashka? (constantly true)]
         (java.nio.file.Files/deleteIfExists
           (.toPath (java.io.File. temp-lcov)))
         (should-be-nil (cov/load-coverage "src/empire/combat.cljc"))
@@ -94,7 +103,7 @@
       (spit temp-lcov sample-lcov)
       (with-redefs [cov/run-coverage! (fn [] (reset! ran? true) true)
                     cov/lcov-path (constantly temp-lcov)
-                    clj-mutate.project/bb-project? (constantly true)]
+                    clj-mutate.project/running-on-babashka? (constantly true)]
         (should= #{1 3 5} (cov/load-coverage "src/empire/combat.cljc"))
         (should= false @ran?))
       (java.nio.file.Files/deleteIfExists
@@ -107,7 +116,7 @@
       (with-redefs [cov/run-coverage! (fn [] (reset! ran? true) true)
                     cov/lcov-path (constantly temp-lcov)
                     cov/stale-reason (fn [_ _] :stale)
-                    clj-mutate.project/bb-project? (constantly false)]
+                    clj-mutate.project/running-on-babashka? (constantly false)]
         (let [output (with-out-str
                        (should= #{1 3 5} (cov/load-coverage "src/empire/combat.cljc")))]
           (should @ran?)
@@ -121,7 +130,7 @@
       (with-redefs [cov/run-coverage! (fn [] false)
                     cov/lcov-path (constantly temp-lcov)
                     cov/stale-reason (fn [_ _] :stale)
-                    clj-mutate.project/bb-project? (constantly false)]
+                    clj-mutate.project/running-on-babashka? (constantly false)]
         (let [output (with-out-str
                        (should= #{1 3 5} (cov/load-coverage "src/empire/combat.cljc")))]
           (should-contain "Coverage refresh failed; continuing with existing coverage if available." output)))

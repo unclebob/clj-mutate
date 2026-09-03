@@ -36,7 +36,8 @@
    :mutation-warning 100
    :timeout-factor 10
    :test-command nil
-   :max-workers nil})
+   :max-workers nil
+   :explicit-options #{}})
 
 (defn- initial-options
   []
@@ -66,11 +67,15 @@
       n
       (usage-error (str "Invalid value for " option-name ". Expected a positive integer.")))))
 
+(defn- mark-explicit
+  [options key]
+  (update options :explicit-options (fnil conj #{}) key))
+
 (defn- assoc-valid-option
   [options key parsed]
   (if (:error parsed)
     parsed
-    (assoc options key parsed)))
+    (mark-explicit (assoc options key parsed) key)))
 
 (defn- parse-lines-option
   [options value]
@@ -100,7 +105,7 @@
   (or (reject-scan-or-update options "--test-command")
       (if (str/blank? value)
         (usage-error "Missing value for --test-command.")
-        (assoc options :test-command value))))
+        (mark-explicit (assoc options :test-command value) :test-command))))
 
 (defn- parse-max-workers-option
   [options value]
@@ -126,9 +131,10 @@
   (or (:lines options)
       (:since-last-run options)
       (:mutate-all options)
-      (not= 10 (:timeout-factor options))
-      (not= (default-test-command) (:test-command options))
-      (:max-workers options)))
+      (:reuse-lcov options)
+      (contains? (:explicit-options options) :timeout-factor)
+      (contains? (:explicit-options options) :test-command)
+      (contains? (:explicit-options options) :max-workers)))
 
 (defn- enable-unless-conflict
   [options rest-args flag-key conflict-fn message]
@@ -172,7 +178,9 @@
     (consume-flag options arg rest-args)
 
     (= "--reuse-lcov" arg)
-    [rest-args (assoc options :reuse-lcov true)]
+    (if-let [err (reject-scan-or-update options "--reuse-lcov")]
+      [rest-args err]
+      [rest-args (assoc options :reuse-lcov true)])
 
     (contains? option-updaters arg)
     (consume-valued-option options arg rest-args)

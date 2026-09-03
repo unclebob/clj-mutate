@@ -3,3 +3,10 @@ target/
 *.mutation-backup
 .claude/
 docs/
+
+# SwarmForge artifacts
+/.swarmforge/
+/.worktrees/
+/mission.md
+/swarmforge/
+/tasks/

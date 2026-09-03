@@ -1,5 +1,6 @@
 (ns clj-mutate.source-spec
   (:require [speclj.core :refer :all]
+            [clj-mutate.mutations :as mutations]
             [clj-mutate.source :as source]))
 
 (describe "read-source-forms"
@@ -75,18 +76,39 @@
       (should= 1 (count uncovered))
       (should= 2 (:line (first uncovered)))))
 
-  (it "treats nil-line sites as covered"
+  (it "treats nil-line sites as uncovered"
     (let [sites [{:line nil :original '+} {:line 5 :original '-}]
           covered-lines #{5}
           [covered uncovered] (source/partition-by-coverage sites covered-lines)]
-      (should= 2 (count covered))
-      (should= 0 (count uncovered))))
+      (should= 1 (count covered))
+      (should= 1 (count uncovered))
+      (should= nil (:line (first uncovered)))))
 
   (it "treats all sites as covered when coverage is nil"
     (let [sites [{:line 1 :original '+} {:line 2 :original '-}]
           [covered uncovered] (source/partition-by-coverage sites nil)]
       (should= 2 (count covered))
-      (should= 0 (count uncovered)))))
+      (should= 0 (count uncovered))))
+
+  (it "treats nil-line sites as uncovered even when coverage is nil"
+    (let [sites [{:line nil :original '+} {:line 2 :original '-}]
+          [covered uncovered] (source/partition-by-coverage sites nil)]
+      (should= 1 (count covered))
+      (should= 1 (count uncovered)))))
+
+(describe "text replacement vs tree replacement"
+  (it "replaces the same original token that apply-mutation would"
+    (let [src "(defn f [] (+ 1 2))\n"
+          forms (source/read-source-forms src)
+          sites (source/discover-all-mutations forms)]
+      (should (seq sites))
+      (doseq [site sites]
+        (let [form (nth forms (:form-index site))
+              mutated-form (mutations/apply-mutation form (:index site))
+              mutated-text (source/mutate-source-text src site)]
+          (should-not= form mutated-form)
+          (should-contain (str (:mutant site)) mutated-text)
+          (should-contain (str (:original site)) src))))))
 
 (describe "integration: discover mutations in a real source file"
   (it "finds mutation sites in mutations.cljc"

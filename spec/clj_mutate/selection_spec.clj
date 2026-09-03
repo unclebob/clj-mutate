@@ -25,7 +25,9 @@
     (should (selection/default-since-last-run? nil false false {:module-hash "x"}))
     (should-not (selection/default-since-last-run? #{1} false false {:module-hash "x"}))
     (should-not (selection/default-since-last-run? nil false true {:module-hash "x"}))
-    (should-not (selection/default-since-last-run? nil false false nil))))
+    (should-not (selection/default-since-last-run? nil false false nil))
+    (should-not (selection/default-since-last-run? nil false false false))
+    (should-not (selection/default-since-last-run? nil false false true))))
 
 (describe "differential-site-counts"
   (it "counts new and manifest-violating form mutations"

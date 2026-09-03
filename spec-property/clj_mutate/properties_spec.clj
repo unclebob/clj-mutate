@@ -134,6 +134,6 @@
           (= result
              (and (nil? lines)
                   (not mutate-all)
-                  (or since (some? prior)))))))))
+                  (or since (map? prior)))))))))
 
 (run-specs)

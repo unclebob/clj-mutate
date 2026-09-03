@@ -19,7 +19,7 @@
   [lines since-last-run mutate-all prior-manifest]
   (and (nil? lines)
        (not mutate-all)
-       (or since-last-run (some? prior-manifest))))
+       (or since-last-run (map? prior-manifest))))
 
 (defn select-mutation-sites
   [covered-sites lines since-last-run module-unchanged? changed-forms]

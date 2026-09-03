@@ -3,7 +3,7 @@
             [clj-mutate.report :as report]))
 
 (describe "print-run-header"
-  (it "reports line filters and missing-manifest differential runs"
+  (it "reports line filters"
     (let [header {:all-sites [{:line 3} {:line 8}]
                   :covered-sites [{:line 3}]
                   :uncovered [{:line 8}]
@@ -23,16 +23,43 @@
                      nil
                      header
                      #{3 8}
-                     true
+                     false
                      nil
                      false
                      [{:line 3}]
                      50))]
       (should-contain "=== Mutation Testing: src/foo.cljc ===" output)
       (should-contain "Filtering to lines: 3,8 → 1 mutations to test." output)
-      (should-contain "No prior embedded manifest found; running all covered mutations." output)
       (should-contain "Manifest exists: no" output)
       (should-contain "Module hash changed: n/a" output)))
+
+  (it "reports missing-manifest differential runs"
+    (let [header {:all-sites [{:line 3} {:line 8}]
+                  :covered-sites [{:line 3}]
+                  :uncovered [{:line 8}]
+                  :changed-mutation-sites 2
+                  :manifest-exists? false
+                  :module-hash-changed? nil
+                  :reuse-lcov false
+                  :coverage-status {:lcov-path "target/coverage/lcov.info"
+                                    :exists? false
+                                    :last-modified nil
+                                    :source-newer? false}
+                  :surface-area-counts {:new-form-mutations 2
+                                        :manifest-violating-form-mutations 0}}
+          output (with-out-str
+                   (report/print-run-header
+                     "src/foo.cljc"
+                     nil
+                     header
+                     nil
+                     true
+                     nil
+                     false
+                     [{:line 3}]
+                     50))]
+      (should-contain "No prior embedded manifest found; running all covered mutations." output)
+      (should-contain "Manifest exists: no" output)))
 
   (it "reports reuse-lcov diagnostics when last-modified is absent"
     (let [header {:all-sites []

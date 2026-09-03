@@ -24,11 +24,12 @@
 
 (defn partition-by-coverage
   [sites covered-lines]
-  (if (nil? covered-lines)
-    [sites []]
-    (let [covered? #(or (nil? (:line %)) (contains? covered-lines (:line %)))
-          grouped (group-by covered? sites)]
-      [(vec (get grouped true [])) (vec (get grouped false []))])))
+  (let [has-line? #(some? (:line %))
+        covered? (if (nil? covered-lines)
+                   has-line?
+                   #(and (has-line? %) (contains? covered-lines (:line %))))
+        grouped (group-by covered? sites)]
+    [(vec (get grouped true [])) (vec (get grouped false []))]))
 
 (defn token-pattern
   [token]
