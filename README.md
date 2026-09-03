@@ -78,7 +78,8 @@ clj -M:mutate src/myapp/foo.cljc --timeout-factor 15
 # Use matching custom test and coverage profiles
 clj -M:mutate src/myapp/foo.cljc \
   --test-command "clj -M:mutation-spec" \
-  --coverage-command "clj -M:mutation-cov"
+  --coverage-command "clj -M:mutation-cov" \
+  --test-roots "spec"
 
 # Explicitly run every selected mutant without LCOV filtering
 clj -M:mutate src/myapp/foo.cljc \
@@ -183,9 +184,9 @@ The footer manifest is embedded at the end of the source file and records:
 - the mutation-rule version and effective test-profile fingerprint
 
 Differential mutation runs update the footer manifest on success, so the next differential run compares against the latest successful mutation baseline.
-If the source, mutation rules, or effective test profile has not changed, the tool reports `No mutations to test` without loading coverage, running the baseline, or creating workers. Version-1 manifests are treated as stale and upgraded only after a successful run. The hashes are portable between JVM Clojure and Babashka.
+If the source, mutation rules, or effective test profile has not changed, the tool reports `No mutations to test` without loading coverage, running the baseline, or creating workers. Version-1 manifests are treated as stale and upgraded only after a successful run. Source hashes are portable between JVM Clojure and Babashka, but verification remains tied to the effective test profile. Moving between the repository's different JVM and Babashka suites therefore re-verifies unchanged source instead of trusting results from another population.
 
-Every mutant is reported with a file-global identifier such as `M017`, its persistent form/path/rule identity, and an exact `line:column` location. Use `--mutation M017` (or the persistent identity) for a precise rerun.
+Every mutant is reported with a file-global identifier such as `M017`, its persistent form/path/rule identity, and an exact `line:column` location. Repeated named top-level forms receive occurrence suffixes such as `defn/foo#2`, keeping persistent identities unique. Use `--mutation M017` (or the persistent identity) for a precise rerun.
 
 ## Exit Statuses
 
@@ -218,7 +219,10 @@ Coverage freshness and provenance are checked automatically:
 - If `target/coverage/lcov.info` is missing, `clj-mutate` regenerates it with `clj -M:cov --lcov`.
 - If LCOV is older than current source/spec inputs, `clj-mutate` regenerates it with `clj -M:cov --lcov`.
 - `target/coverage/clj-mutate.edn` records the coverage command, test command, and effective test-profile fingerprint.
-- A custom `--test-command` requires a matching `--coverage-command`, or `--no-coverage` to disable LCOV filtering explicitly.
+- The selected `deps.edn` alias or `bb.edn` task and its effective test-root files are fingerprinted; unrelated aliases are ignored.
+- A custom `--test-command` requires a matching `--coverage-command`, or `--no-coverage` to disable LCOV filtering explicitly. If roots cannot be inferred from the selected aliases/tasks, declare the shared population with `--test-roots`; roots must be existing directories relative to the project.
+- The resolved test roots are linked into each mutation worker so custom profiles execute the same files that were fingerprinted for provenance.
+- During regeneration, existing LCOV is moved aside. It is replaced only when the coverage command creates a fresh, parseable artifact; otherwise the prior file is restored and its provenance is not changed.
 - If a mutation site sits on a `recur` argument line or a nested loop-state update expression, LCOV may emit no `DA` entry for that line. In that case `clj-mutate` classifies the site as uncovered even when behavior-level tests exercise the path.
 
 With `--reuse-lcov`:

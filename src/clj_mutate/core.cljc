@@ -42,7 +42,8 @@
                                      (:mutation-warning validated)
                                      (:reuse-lcov validated)
                                      (:mutation validated)
-                                     (:coverage-command validated))
+                                     (:coverage-command validated)
+                                     (:test-roots validated))
       (catch clojure.lang.ExceptionInfo ex
         (let [{:keys [reason lcov-path]} (ex-data ex)]
           (case reason
@@ -56,6 +57,12 @@
             (do
               (println "Error: --reuse-lcov was requested, but the LCOV test profile does not match this run.")
               (println "Run without --reuse-lcov to regenerate matching coverage.")
+              {:status :configuration-error})
+
+            :coverage-test-profile-mismatch
+            (do
+              (println "Error: the coverage and mutation commands do not identify the same test population.")
+              (println "Use matching aliases/tasks or provide --test-roots explicitly.")
               {:status :configuration-error})
 
             (:invalid-mutation-location :mutation-target-mismatch :no-op-mutation)

@@ -61,17 +61,19 @@
 
 (defn top-level-form-manifest
   [source-or-forms]
-  (let [root (syntax/of-source (as-source source-or-forms))]
+  (let [root (syntax/of-source (as-source source-or-forms))
+        locations (syntax/top-level-locations root)
+        ids (syntax/top-level-form-ids (mapv syntax/sexpr locations))]
     (mapv
       (fn [idx zloc]
         (let [form (syntax/sexpr zloc)]
-          {:id (syntax/top-level-form-id idx form)
+          {:id (nth ids idx)
            :kind (str (or (syntax/form-kind form) :literal))
            :line (:line (syntax/position zloc))
            :end-line (syntax/end-line zloc)
            :hash (digest/sha-256 (syntax/source zloc))}))
       (range)
-      (syntax/top-level-locations root))))
+      locations)))
 
 (defn module-hash
   [source-or-forms]

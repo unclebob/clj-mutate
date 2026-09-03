@@ -47,11 +47,11 @@
           deps-file (File. dir "deps.edn")]
       (.mkdirs spec-dir)
       (spit spec-file "(ns sample-spec)\n")
-      (spit deps-file "{:aliases {:deintroverter {:old true}}}\n")
+      (spit deps-file "{:aliases {:spec {:extra-paths [\"spec\"]}\n           :deintroverter {:old true}}}\n")
       (try
         (with-redefs [project/running-on-babashka? (constantly false)]
           (let [before (project/test-profile-fingerprint dir "clj -M:spec")]
-            (spit deps-file "{:aliases {:deintroverter {:new true}}}\n")
+            (spit deps-file "{:aliases {:spec {:extra-paths [\"spec\"]}\n           :deintroverter {:new true}}}\n")
             (should= before (project/test-profile-fingerprint dir "clj -M:spec"))
             (spit spec-file "(ns changed-spec)\n")
             (should-not= before (project/test-profile-fingerprint dir "clj -M:spec"))))
@@ -59,6 +59,60 @@
           (.delete spec-file)
           (.delete spec-dir)
           (.delete deps-file)
+          (.delete (File. dir))))))
+
+  (it "tracks custom test roots selected by a Clojure alias"
+    (let [dir (str "target/test-custom-profile-" (System/nanoTime))
+          test-dir (File. dir "custom-tests")
+          test-file (File. test-dir "sample_spec.clj")
+          deps-file (File. dir "deps.edn")]
+      (.mkdirs test-dir)
+      (spit test-file "(ns sample-spec)\n")
+      (spit deps-file "{:aliases {:custom {:extra-paths [\"custom-tests\"]}}}\n")
+      (try
+        (with-redefs [project/running-on-babashka? (constantly false)]
+          (let [before (project/test-profile-fingerprint dir "clj -M:custom")]
+            (should= ["custom-tests"]
+                     (project/test-profile-roots dir "clj -M:custom" nil))
+            (spit test-file "(ns changed-sample-spec)\n")
+            (should-not= before
+                         (project/test-profile-fingerprint dir "clj -M:custom"))))
+        (finally
+          (.delete test-file)
+          (.delete test-dir)
+          (.delete deps-file)
+          (.delete (File. dir))))))
+
+  (it "detects mismatched inferred test and coverage populations"
+    (let [dir (str "target/test-profile-match-" (System/nanoTime))
+          specs (File. dir "spec")
+          integration (File. dir "integration")
+          deps-file (File. dir "deps.edn")]
+      (.mkdirs specs)
+      (.mkdirs integration)
+      (spit deps-file
+            "{:aliases {:mutation-spec {:extra-paths [\"spec\"]}\n           :mutation-cov {:extra-paths [\"integration\"]}}}\n")
+      (try
+        (should-not
+          (project/commands-share-test-profile?
+            dir "clj -M:mutation-spec" "clj -M:mutation-cov" nil))
+        (should
+          (project/commands-share-test-profile?
+            dir "clj -M:mutation-spec" "clj -M:mutation-cov" ["spec"]))
+        (finally
+          (.delete deps-file)
+          (.delete specs)
+          (.delete integration)
+          (.delete (File. dir))))))
+
+  (it "rejects declared roots outside the project"
+    (let [dir (str "target/test-profile-safe-root-" (System/nanoTime))]
+      (.mkdirs (File. dir))
+      (try
+        (should= [] (project/test-profile-roots dir nil [".."]))
+        (should-not
+          (project/commands-share-test-profile? dir "test" "coverage" [".."]))
+        (finally
           (.delete (File. dir)))))))
 
 (describe "config-file"

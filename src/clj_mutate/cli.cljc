@@ -25,6 +25,7 @@
     "  --mutation-warning N   Warn when more than N mutations are found (default 100)\n"
     "  --timeout-factor N     Mutation timeout multiplier vs baseline (default 10)\n"
     "  --test-command CMD     Test command to run (default: bb spec or clj -M:spec --tag ~no-mutate)\n"
+    "  --test-roots D1,D2     Test roots used by both test and coverage commands\n"
     "  --max-workers N        Limit parallel workers to N (positive integer)\n"
     "  --help                 Print this help and exit\n"))
 
@@ -41,6 +42,7 @@
    :mutation-warning 100
    :timeout-factor 10
    :test-command nil
+   :test-roots nil
    :max-workers nil
    :explicit-options #{}})
 
@@ -114,6 +116,25 @@
         (usage-error "Missing value for --test-command.")
         (mark-explicit (assoc options :test-command value) :test-command))))
 
+(defn- parse-test-roots-option
+  [options value]
+  (or (reject-scan-or-update options "--test-roots")
+      (let [roots (->> (str/split value #",")
+                       (map str/trim)
+                       (remove str/blank?)
+                       vec)
+            normalized (project/test-profile-roots
+                         (System/getProperty "user.dir") nil roots)]
+        (cond
+          (empty? roots)
+          (usage-error "Missing value for --test-roots.")
+
+          (not= (count (distinct roots)) (count normalized))
+          (usage-error "Invalid value for --test-roots. Every entry must be an existing project-relative directory.")
+
+          :else
+          (mark-explicit (assoc options :test-roots normalized) :test-roots)))))
+
 (defn- parse-coverage-command-option
   [options value]
   (or (reject-scan-or-update options "--coverage-command")
@@ -145,6 +166,7 @@
    "--mutation-warning" parse-mutation-warning-option
    "--timeout-factor" parse-timeout-factor-option
    "--test-command" parse-test-command-option
+   "--test-roots" parse-test-roots-option
    "--coverage-command" parse-coverage-command-option
    "--mutation" parse-mutation-option
    "--max-workers" parse-max-workers-option})
@@ -162,6 +184,7 @@
       (:reuse-lcov options)
       (contains? (:explicit-options options) :timeout-factor)
       (contains? (:explicit-options options) :test-command)
+      (contains? (:explicit-options options) :test-roots)
       (contains? (:explicit-options options) :coverage-command)
       (contains? (:explicit-options options) :max-workers)))
 
@@ -242,11 +265,33 @@
     (loop [[arg & rest-args] args
            options (initial-options)]
       (if (nil? arg)
-        (let [checked (ensure-source-path options)]
-          (if (and (not (:error checked))
-                   (contains? (:explicit-options checked) :test-command)
-                   (not (contains? (:explicit-options checked) :coverage-command)))
+        (let [checked (ensure-source-path options)
+              custom-test? (contains? (:explicit-options checked) :test-command)
+              roots (when-not (:error checked)
+                      (project/test-profile-roots
+                        (System/getProperty "user.dir")
+                        (:test-command checked)
+                        (:test-roots checked)))]
+          (cond
+            (:error checked)
+            checked
+
+            (and custom-test?
+                 (not (contains? (:explicit-options checked) :coverage-command)))
             (usage-error "A custom --test-command requires --coverage-command or --no-coverage so coverage cannot silently use a different test population.")
+
+            (and custom-test? (empty? roots))
+            (usage-error "A custom --test-command must expose test roots through its project alias/task or --test-roots.")
+
+            (and (:coverage-command checked)
+                 (not (project/commands-share-test-profile?
+                        (System/getProperty "user.dir")
+                        (:test-command checked)
+                        (:coverage-command checked)
+                        (:test-roots checked))))
+            (usage-error "The test and coverage commands do not identify the same test roots. Use matching project aliases or --test-roots.")
+
+            :else
             checked))
         (let [[remaining updated-options] (consume-option options arg rest-args)]
           (if (:error updated-options)

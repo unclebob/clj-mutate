@@ -4,7 +4,9 @@
             [clojure.edn :as edn]
             [clojure.java.shell :as shell]
             [clojure.string :as str])
-  (:import [java.io File]))
+  (:import [java.io File]
+           [java.nio.file CopyOption Files StandardCopyOption]
+           [java.util UUID]))
 
 (defn lcov-path
   "Return the path to the LCOV info file."
@@ -60,24 +62,40 @@
         (catch Exception _ nil)))))
 
 (defn- expected-provenance
-  [coverage-command test-command]
-  {:coverage-command coverage-command
-   :test-command test-command
-   :test-profile-fingerprint (project/test-profile-fingerprint test-command)})
+  ([coverage-command test-command]
+   (expected-provenance coverage-command test-command nil))
+  ([coverage-command test-command test-roots]
+   {:coverage-command coverage-command
+    :test-command test-command
+    :test-roots (project/test-profile-roots (System/getProperty "user.dir")
+                                            test-command test-roots)
+    :test-profile-fingerprint
+    (project/test-profile-fingerprint (System/getProperty "user.dir")
+                                      test-command test-roots)
+    :coverage-profile-fingerprint
+    (project/test-profile-fingerprint (System/getProperty "user.dir")
+                                      coverage-command test-roots)}))
 
 (defn- write-provenance!
   [provenance]
-  (let [file (File. (provenance-path))]
+  (let [file (File. (provenance-path))
+        parent (.getParentFile file)
+        temp (File. parent (str ".clj-mutate-provenance-" (UUID/randomUUID) ".tmp"))]
     (.mkdirs (.getParentFile file))
-    (spit file (pr-str provenance))))
+    (try
+      (spit temp (pr-str provenance))
+      (Files/move (.toPath temp) (.toPath file)
+                  (into-array CopyOption [StandardCopyOption/REPLACE_EXISTING]))
+      (finally
+        (Files/deleteIfExists (.toPath temp))))))
 
 (defn coverage-status
   ([source-path] (coverage-status source-path {}))
-  ([source-path {:keys [coverage-command test-command]}]
+  ([source-path {:keys [coverage-command test-command test-roots]}]
   (let [lcov-file (File. (lcov-path))
         reason (stale-reason lcov-file source-path)
         expected (when test-command
-                   (expected-provenance coverage-command test-command))
+                   (expected-provenance coverage-command test-command test-roots))
         recorded (read-provenance)]
     {:lcov-path (lcov-path)
      :exists? (.exists lcov-file)
@@ -92,7 +110,12 @@
 (defn- covered-lines-from-lcov
   [lcov-file source-path]
   (when (.exists lcov-file)
-    (lcov/covered-lines (lcov/parse-lcov (slurp lcov-file)) source-path)))
+    (let [parsed (lcov/parse-lcov (slurp lcov-file))]
+      (when-not (seq parsed)
+        (throw (ex-info "LCOV contains no source records."
+                        {:reason :invalid-lcov
+                         :lcov-path (.getPath lcov-file)})))
+      (or (lcov/covered-lines parsed source-path) #{}))))
 
 (defn- missing-reuse-error
   [source-path]
@@ -110,6 +133,78 @@
             :recorded-provenance (:recorded-provenance status)
             :expected-provenance (:expected-provenance status)}))
 
+(defn- incompatible-profile-error
+  [test-command coverage-command test-roots]
+  (ex-info "Coverage and mutation commands do not identify the same test population."
+           {:reason :coverage-test-profile-mismatch
+            :test-command test-command
+            :coverage-command coverage-command
+            :test-roots test-roots}))
+
+(defn- move-aside!
+  [^File file prefix]
+  (when (.exists file)
+    (let [backup (File. (.getParentFile file)
+                        (str "." prefix "-" (UUID/randomUUID) ".previous"))]
+      (Files/move (.toPath file) (.toPath backup)
+                  (into-array CopyOption [StandardCopyOption/REPLACE_EXISTING]))
+      backup)))
+
+(defn- rollback-file!
+  [^File file ^File backup]
+  (Files/deleteIfExists (.toPath file))
+  (when (and backup (.exists backup))
+    (Files/move (.toPath backup) (.toPath file)
+                (into-array CopyOption [StandardCopyOption/REPLACE_EXISTING]))))
+
+(defn- remove-backup!
+  [^File backup]
+  (when backup
+    (try
+      (Files/deleteIfExists (.toPath backup))
+      (catch Exception _ false))))
+
+(defn- regeneration-failure
+  [initial backup]
+  (assoc initial
+         :lines nil
+         :status (if backup :refresh-failed :missing)))
+
+(defn- commit-provenance!
+  [source-path options expected]
+  (let [provenance-file (File. (provenance-path))
+        backup (move-aside! provenance-file "clj-mutate-provenance")]
+    (try
+      (write-provenance! expected)
+      (let [refreshed (coverage-status source-path options)]
+        (remove-backup! backup)
+        refreshed)
+      (catch Exception ex
+        (rollback-file! provenance-file backup)
+        (throw ex))
+      (finally
+        (remove-backup! backup)))))
+
+(defn- regenerate-coverage
+  [source-path lcov-file coverage-command expected initial options]
+  (let [backup (move-aside! lcov-file "lcov")]
+    (try
+      (if (and (run-coverage! coverage-command)
+               (.exists lcov-file)
+               (nil? (stale-reason lcov-file source-path)))
+        (let [lines (covered-lines-from-lcov lcov-file source-path)]
+          (let [refreshed (commit-provenance! source-path options expected)]
+            (remove-backup! backup)
+            (assoc refreshed :lines lines :status :regenerated)))
+        (do
+          (rollback-file! lcov-file backup)
+          (regeneration-failure initial backup)))
+      (catch Exception _
+        (rollback-file! lcov-file backup)
+        (regeneration-failure initial backup))
+      (finally
+        (remove-backup! backup)))))
+
 (defn load-coverage
   "Load coverage and return structured lines/status data without printing."
   ([source-path]
@@ -123,10 +218,12 @@
                                 (project/default-coverage-command)))
          test-command (or (:test-command options)
                           (project/default-test-command))
+         test-roots (:test-roots options)
          lcov-file (File. (lcov-path))
-         expected (expected-provenance coverage-command test-command)
+         expected (expected-provenance coverage-command test-command test-roots)
          initial (coverage-status source-path {:coverage-command coverage-command
-                                               :test-command test-command})
+                                               :test-command test-command
+                                               :test-roots test-roots})
          reason (:stale-reason initial)
          profile-match? (:profile-match? initial)]
      (cond
@@ -144,27 +241,23 @@
               :lines (covered-lines-from-lcov lcov-file source-path)
               :status (if (= :stale reason) :stale-reused :fresh-reused))
 
+       (nil? coverage-command)
+       (assoc initial :lines nil :status :coverage-disabled)
+
+       (not (project/commands-share-test-profile?
+              (System/getProperty "user.dir") test-command coverage-command test-roots))
+       (throw (incompatible-profile-error test-command coverage-command test-roots))
+
        (and (nil? reason) profile-match?)
        (assoc initial
               :lines (covered-lines-from-lcov lcov-file source-path)
               :status :fresh)
 
        coverage-command
-       (if (run-coverage! coverage-command)
-         (if (nil? (stale-reason lcov-file source-path))
-           (do
-             (write-provenance! expected)
-             (let [refreshed (coverage-status source-path {:coverage-command coverage-command
-                                                           :test-command test-command})]
-               (assoc refreshed
-                      :lines (covered-lines-from-lcov lcov-file source-path)
-                      :status :regenerated)))
-           (assoc initial
-                  :lines nil
-                  :status (if (.exists lcov-file) :refresh-failed :missing)))
-         (assoc initial
-                :lines (covered-lines-from-lcov lcov-file source-path)
-                :status (if (.exists lcov-file) :refresh-failed :missing)))
+       (regenerate-coverage source-path lcov-file coverage-command expected initial
+                            {:coverage-command coverage-command
+                             :test-command test-command
+                             :test-roots test-roots})
 
        :else
        (assoc initial

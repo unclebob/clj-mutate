@@ -46,6 +46,36 @@
         (finally
           (workers/cleanup-worker-dirs! base-dir)))))
 
+  (it "symlinks explicitly selected custom test roots"
+    (let [base-dir "target/test-workers-custom-roots"
+          custom-root (str "target/custom-spec-" (System/nanoTime))
+          source-rel "src/myapp/foo.cljc"
+          content "(ns myapp.foo)\n"
+          _ (.mkdirs (File. custom-root))
+          dirs (workers/create-worker-dirs!
+                 base-dir source-rel content 1 [custom-root])]
+      (try
+        (should
+          (Files/isSymbolicLink
+            (.toPath (File. (str (first dirs) "/" custom-root)))))
+        (finally
+          (workers/cleanup-worker-dirs! base-dir)
+          (.delete (File. custom-root))))))
+
+  (it "does not symlink a test root that contains the mutated source"
+    (let [base-dir "target/test-workers-source-root"
+          source-rel "src/clj_mutate/source_root_fixture.cljc"
+          content "(ns clj-mutate.source-root-fixture)\n"
+          dirs (workers/create-worker-dirs!
+                 base-dir source-rel content 1 ["src"])]
+      (try
+        (let [worker-source (File. (str (first dirs) "/" source-rel))]
+          (should (.isFile worker-source))
+          (should-not (Files/isSymbolicLink (.toPath worker-source)))
+          (should= content (slurp worker-source)))
+        (finally
+          (workers/cleanup-worker-dirs! base-dir)))))
+
   (it "creates source overlay with symlinked siblings"
     (let [base-dir "target/test-workers-overlay"
           temp-root (str "target/test-overlay-root-" (System/nanoTime))

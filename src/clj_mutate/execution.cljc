@@ -29,12 +29,18 @@
   ([sites source-path original-content timeout-ms max-workers test-command]
    (run-mutations-parallel sites source-path original-content timeout-ms max-workers test-command nil))
   ([sites source-path original-content timeout-ms max-workers test-command on-progress]
+   (run-mutations-parallel sites source-path original-content timeout-ms max-workers
+                           test-command on-progress nil))
+  ([sites source-path original-content timeout-ms max-workers test-command on-progress test-roots]
    (let [run-base-dir (workers/new-run-base-dir worker-root-dir)
          n-workers (max 1 (min (count sites)
                                (.availableProcessors (Runtime/getRuntime))
                                (or max-workers Integer/MAX_VALUE)))
-         worker-dirs (workers/create-worker-dirs!
-                       run-base-dir source-path original-content n-workers)
+         worker-dirs (if (seq test-roots)
+                       (workers/create-worker-dirs!
+                         run-base-dir source-path original-content n-workers test-roots)
+                       (workers/create-worker-dirs!
+                         run-base-dir source-path original-content n-workers))
          queue (java.util.concurrent.LinkedBlockingQueue. ^java.util.Collection (vec sites))
          results (atom [])
          counter (atom 0)

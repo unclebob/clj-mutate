@@ -91,8 +91,24 @@
       :else
       (str "form/" index "/" (or head :literal)))))
 
+(defn top-level-form-ids
+  "Return deterministic, file-unique form ids. The first occurrence keeps the
+   readable base id; repeated named forms receive an occurrence suffix."
+  [forms]
+  (:ids
+    (reduce
+      (fn [{:keys [counts ids]} [index form]]
+        (let [base (top-level-form-id index form)
+              occurrence (inc (get counts base 0))
+              unique-id (if (= 1 occurrence)
+                          base
+                          (str base "#" occurrence))]
+          {:counts (assoc counts base occurrence)
+           :ids (conj ids unique-id)}))
+      {:counts {} :ids []}
+      (map-indexed vector forms))))
+
 (defn end-line
   [zloc]
   (let [{:keys [line]} (position zloc)]
     (+ line (count (re-seq #"\n" (source zloc))))))
-

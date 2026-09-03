@@ -7,6 +7,10 @@
   (str "SF:src/empire/combat.cljc\n"
        "DA:1,5\nDA:2,0\nDA:3,3\nDA:5,1\nend_of_record\n"))
 
+(def other-source-lcov
+  (str "SF:src/empire/other.cljc\n"
+       "DA:1,1\nend_of_record\n"))
+
 (defn temp-path [prefix suffix]
   (str "/tmp/" prefix "-" (System/nanoTime) suffix))
 
@@ -46,7 +50,8 @@
           (let [result (cov/load-coverage
                          "src/empire/combat.cljc"
                          {:test-command "clj -M:mutation-spec"
-                          :coverage-command "clj -M:mutation-cov"})]
+                          :coverage-command "clj -M:mutation-cov"
+                          :test-roots ["spec"]})]
             (should= "clj -M:mutation-cov" @ran)
             (should= :regenerated (:status result))
             (should= #{1 3 5} (:lines result))
@@ -59,7 +64,7 @@
     (let [lcov (temp-path "clj-mutate-stale" ".info")
           command "clj -M:mutation-spec"
           coverage-command "clj -M:mutation-cov"
-          expected (#'cov/expected-provenance coverage-command command)]
+          expected (#'cov/expected-provenance coverage-command command ["spec"])]
       (spit lcov sample-lcov)
       (try
         (with-redefs [cov/lcov-path (constantly lcov)
@@ -68,9 +73,10 @@
                       cov/run-coverage! (fn [_] (throw (Exception. "should not run")))]
           (let [result (cov/load-coverage
                          "src/empire/combat.cljc"
-                         {:reuse-lcov true
-                          :test-command command
-                          :coverage-command coverage-command})]
+                          {:reuse-lcov true
+                           :test-command command
+                          :coverage-command coverage-command
+                          :test-roots ["spec"]})]
             (should= :stale-reused (:status result))
             (should= #{1 3 5} (:lines result))))
         (finally (delete-if-present! lcov)))))
@@ -132,10 +138,14 @@
                       cov/stale-reason (fn [_ _]
                                          (when (= 1 (swap! freshness-checks inc))
                                            :stale))
-                      cov/run-coverage! (fn [_] (reset! ran? true) true)]
+                      cov/run-coverage! (fn [_]
+                                          (reset! ran? true)
+                                          (spit lcov sample-lcov)
+                                          true)]
           (let [result (cov/load-coverage
                          "src/empire/combat.cljc"
-                         {:coverage-command "clj -M:cov"})]
+                         {:coverage-command "clj -M:cov"
+                          :test-roots ["spec" "spec-jvm"]})]
             (should @ran?)
             (should= :regenerated (:status result))
             (should= #{1 3 5} (:lines result))))
@@ -155,10 +165,87 @@
                          (reset! result
                                  (cov/load-coverage
                                    "src/empire/combat.cljc"
-                                   {:coverage-command "clj -M:cov"})))]
+                                   {:coverage-command "clj -M:cov"
+                                    :test-roots ["spec"]})))]
             (should= "" output)
             (should= :refresh-failed (:status @result))))
-        (finally (delete-if-present! lcov))))))
+        (finally (delete-if-present! lcov)))))
+
+  (it "does not relabel an unchanged pre-existing LCOV file as regenerated"
+    (let [lcov (temp-path "clj-mutate-unchanged-output" ".info")
+          provenance (temp-path "clj-mutate-unchanged-output" ".edn")]
+      (spit lcov sample-lcov)
+      (let [before (slurp lcov)]
+        (try
+          (with-redefs [cov/lcov-path (constantly lcov)
+                        cov/provenance-path (constantly provenance)
+                        cov/stale-reason (fn [_ _] :stale)
+                        cov/run-coverage! (fn [_] true)]
+            (let [result (cov/load-coverage
+                           "src/empire/combat.cljc"
+                           {:test-command "clj -M:mutation-spec"
+                            :coverage-command "clj -M:mutation-cov"
+                            :test-roots ["spec"]})]
+              (should= :refresh-failed (:status result))
+              (should-be-nil (:lines result))
+              (should= before (slurp lcov))
+              (should-not (.exists (java.io.File. provenance)))))
+          (finally
+            (delete-if-present! lcov)
+            (delete-if-present! provenance))))))
+
+  (it "treats a valid report that omits the target source as zero covered lines"
+    (let [lcov (temp-path "clj-mutate-other-source" ".info")
+          provenance (temp-path "clj-mutate-other-source" ".edn")]
+      (try
+        (with-redefs [cov/lcov-path (constantly lcov)
+                      cov/provenance-path (constantly provenance)
+                      cov/run-coverage! (fn [_]
+                                          (spit lcov other-source-lcov)
+                                          true)]
+          (let [result (cov/load-coverage
+                         "src/empire/combat.cljc"
+                         {:test-command "clj -M:mutation-spec"
+                          :coverage-command "clj -M:mutation-cov"
+                          :test-roots ["spec"]})]
+            (should= :regenerated (:status result))
+            (should= #{} (:lines result))))
+        (finally
+          (delete-if-present! lcov)
+          (delete-if-present! provenance)))))
+
+  (it "restores both LCOV and provenance when new coverage is invalid"
+    (let [lcov (temp-path "clj-mutate-invalid-output" ".info")
+          provenance (temp-path "clj-mutate-invalid-output" ".edn")
+          old-provenance {:profile :old}]
+      (spit lcov sample-lcov)
+      (spit provenance (pr-str old-provenance))
+      (try
+        (with-redefs [cov/lcov-path (constantly lcov)
+                      cov/provenance-path (constantly provenance)
+                      cov/run-coverage! (fn [_]
+                                          (spit lcov "not an lcov report\n")
+                                          true)]
+          (let [result (cov/load-coverage
+                         "src/empire/combat.cljc"
+                         {:test-command "clj -M:mutation-spec"
+                          :coverage-command "clj -M:mutation-cov"
+                          :test-roots ["spec"]})]
+            (should= :refresh-failed (:status result))
+            (should= sample-lcov (slurp lcov))
+            (should= old-provenance (read-string (slurp provenance)))))
+        (finally
+          (delete-if-present! lcov)
+          (delete-if-present! provenance)))))
+
+  (it "rejects coverage and test commands with different inferred roots"
+    (try
+      (cov/load-coverage "src/clj_mutate/coverage.cljc"
+                         {:test-command "clj -M:spec"
+                          :coverage-command "clj -M:property"})
+      (should false)
+      (catch clojure.lang.ExceptionInfo ex
+        (should= :coverage-test-profile-mismatch (:reason (ex-data ex))))))
 
   (it "does not report regeneration when a successful command creates no LCOV file"
     (let [lcov (temp-path "clj-mutate-no-output" ".info")]
@@ -167,9 +254,10 @@
                     cov/run-coverage! (fn [_] true)]
         (let [result (cov/load-coverage
                        "src/empire/combat.cljc"
-                       {:coverage-command "true"})]
+                       {:coverage-command "true"
+                        :test-roots ["spec" "spec-jvm"]})]
           (should= :missing (:status result))
-          (should-be-nil (:lines result))))))
+          (should-be-nil (:lines result)))))))
 
 (describe "coverage-status"
   (it "reports presence, freshness, and provenance matching"

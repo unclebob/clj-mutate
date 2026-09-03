@@ -11,10 +11,16 @@
             [clj-mutate.source :as source]))
 
 (defn mutation-provenance
-  [test-command]
-  {:mutation-rules-version mutations/rules-version
-   :test-command test-command
-   :test-profile-fingerprint (project/test-profile-fingerprint test-command)})
+  ([test-command]
+   (mutation-provenance test-command nil))
+  ([test-command test-roots]
+   {:mutation-rules-version mutations/rules-version
+    :test-command test-command
+    :test-roots (project/test-profile-roots
+                  (System/getProperty "user.dir") test-command test-roots)
+    :test-profile-fingerprint
+    (project/test-profile-fingerprint
+      (System/getProperty "user.dir") test-command test-roots)}))
 
 (defn- normalize-context-options
   [options-or-reuse]
@@ -32,13 +38,13 @@
   "Plan a run, then load coverage only when the plan has work. The third
    argument may be the legacy reuse-lcov boolean or an options map."
   [source-path since-last-run options-or-reuse]
-  (let [{:keys [reuse-lcov test-command coverage-command]}
+  (let [{:keys [reuse-lcov test-command coverage-command test-roots]}
         (normalize-context-options options-or-reuse)
         original-content (slurp source-path)
         prior-manifest (manifest/extract-embedded-manifest original-content)
         manifest-exists? (some? prior-manifest)
         analysis-content (manifest/strip-mutation-metadata original-content)
-        provenance (mutation-provenance test-command)
+        provenance (mutation-provenance test-command test-roots)
         current-module-hash (manifest/module-hash analysis-content)
         trusted-manifest? (manifest/trusted-manifest? prior-manifest provenance)
         same-module? (= current-module-hash (:module-hash prior-manifest))
@@ -102,7 +108,8 @@
       (let [loaded (coverage/load-coverage
                      source-path {:reuse-lcov reuse-lcov
                                   :coverage-command coverage-command
-                                  :test-command test-command})
+                                  :test-command test-command
+                                  :test-roots test-roots})
             coverage-data (if (map? loaded)
                             loaded
                             {:lines loaded :status :unavailable})
@@ -125,10 +132,14 @@
     {:status :passed :mutations (count all-sites)}))
 
 (defn run-mutation-suite
-  [sites source-path analysis-content timeout-ms max-workers test-command]
-  (if (seq sites)
-    (execution/run-mutations-parallel sites source-path analysis-content timeout-ms max-workers test-command report/print-progress)
-    []))
+  ([sites source-path analysis-content timeout-ms max-workers test-command]
+   (run-mutation-suite sites source-path analysis-content timeout-ms max-workers
+                       test-command nil))
+  ([sites source-path analysis-content timeout-ms max-workers test-command test-roots]
+   (if (seq sites)
+     (execution/run-mutations-parallel sites source-path analysis-content timeout-ms
+                                       max-workers test-command report/print-progress test-roots)
+     [])))
 
 (defn with-baseline
   [test-command timeout-factor on-pass]
@@ -205,6 +216,8 @@
   ([source-path lines timeout-factor test-command max-workers since-last-run mutate-all mutation-warning reuse-lcov]
    (run-mutation-testing source-path lines timeout-factor test-command max-workers since-last-run mutate-all mutation-warning reuse-lcov nil (project/default-coverage-command)))
   ([source-path lines timeout-factor test-command max-workers since-last-run mutate-all mutation-warning reuse-lcov mutation coverage-command]
+   (run-mutation-testing source-path lines timeout-factor test-command max-workers since-last-run mutate-all mutation-warning reuse-lcov mutation coverage-command nil))
+  ([source-path lines timeout-factor test-command max-workers since-last-run mutate-all mutation-warning reuse-lcov mutation coverage-command test-roots]
    (when (backup/restore-from-backup! source-path)
      (report/print-backup-restored))
    (let [prior-manifest-or-nil (manifest/extract-embedded-manifest (slurp source-path))
@@ -216,11 +229,12 @@
          (mutation-run-context source-path effective-since-last-run
                                {:reuse-lcov reuse-lcov
                                 :test-command test-command
-                                :coverage-command coverage-command})
+                                :coverage-command coverage-command
+                                :test-roots test-roots})
          {:keys [prev-date prior-manifest analysis-content all-sites covered-sites uncovered
                  module-unchanged? changed-forms manifest-content original-content
                  manifest-exists? module-hash-changed? changed-mutation-sites
-                 surface-area-counts coverage-status]} context]
+                 surface-area-counts coverage-status provenance]} context]
      (if module-unchanged?
        (do
          (report/print-no-changes source-path prev-date)
@@ -273,7 +287,8 @@
                (try
                  (let [results
                        (run-mutation-suite sites source-path analysis-content
-                                           timeout-ms max-workers test-command)
+                                           timeout-ms max-workers test-command
+                                           (:test-roots provenance))
                        status (result-status results in-scope-uncovered)
                        summary (report/summarize-results
                                  results lines effective-since-last-run in-scope-uncovered)]

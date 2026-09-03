@@ -13,6 +13,8 @@
 (defn- symlink! [link-path target-path]
   (let [link (Paths/get link-path (into-array String []))
         target (.toAbsolutePath (Paths/get target-path (into-array String [])))]
+    (when-let [parent (.getParentFile (.toFile link))]
+      (.mkdirs parent))
     (Files/deleteIfExists link)
     (Files/createSymbolicLink link target (into-array java.nio.file.attribute.FileAttribute []))))
 
@@ -49,25 +51,33 @@
 
 (defn create-worker-dirs!
   "Create n worker directories under base-dir. Each gets a copy of the
-   project config, symlinked runtime-appropriate test roots, and a source
-   overlay where only the mutated file is a real file."
-  [base-dir source-rel-path original-content n]
-  (let [project-root (System/getProperty "user.dir")
-        configs (project/config-files project-root)]
-    (vec
-      (for [i (range n)]
-        (let [dir-path (str base-dir "/worker-" i)]
-          (.mkdirs (File. dir-path))
-          (doseq [config configs]
-            (let [src (File. (str project-root "/" config))]
-              (when (.exists src)
-                (spit (str dir-path "/" config) (slurp src)))))
-          (doseq [test-dir (project/test-directories project-root)]
-            (symlink! (str dir-path "/" test-dir)
-                      (str project-root "/" test-dir)))
-          (setup-source-overlay! dir-path project-root
-                                 source-rel-path original-content)
-          dir-path)))))
+   project config, symlinked effective test roots, and a source overlay where
+   only the mutated file is a real file."
+  ([base-dir source-rel-path original-content n]
+   (create-worker-dirs! base-dir source-rel-path original-content n nil))
+  ([base-dir source-rel-path original-content n test-roots]
+   (let [project-root (System/getProperty "user.dir")
+         configs (project/config-files project-root)
+         roots (or (seq test-roots) (project/test-directories project-root))
+         source-root? (fn [test-root]
+                        (or (= source-rel-path test-root)
+                            (str/starts-with? source-rel-path
+                                              (str test-root "/"))))
+         linked-roots (remove source-root? roots)]
+     (vec
+       (for [i (range n)]
+         (let [dir-path (str base-dir "/worker-" i)]
+           (.mkdirs (File. dir-path))
+           (doseq [config configs]
+             (let [src (File. (str project-root "/" config))]
+               (when (.exists src)
+                 (spit (str dir-path "/" config) (slurp src)))))
+           (doseq [test-dir linked-roots]
+             (symlink! (str dir-path "/" test-dir)
+                       (str project-root "/" test-dir)))
+           (setup-source-overlay! dir-path project-root
+                                  source-rel-path original-content)
+           dir-path))))))
 
 (defn cleanup-worker-dirs!
   "Remove the base directory and all worker directories."

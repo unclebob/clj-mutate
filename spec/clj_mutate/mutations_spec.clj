@@ -140,6 +140,18 @@
     (let [sites (m/find-mutations '(if-not (> (count v) 10) (subvec v 0 10) v))]
       (should (has-site? '> '>= sites))))
 
+  (it "does not suppress a >= if-not trim whose branches were not reversed"
+    (let [sites (m/find-mutations '(if-not (>= (count v) 10) (subvec v 0 10) v))]
+      (should (has-site? '>= '> sites))))
+
+  (it "does not suppress a > if trim whose branches were reversed"
+    (let [sites (m/find-mutations '(if (> (count v) 10) v (subvec v 0 10)))]
+      (should (has-site? '> '>= sites))))
+
+  (it "does not suppress a >= if trim whose branches were reversed"
+    (let [sites (m/find-mutations '(if (>= (count v) 10) v (subvec v 0 10)))]
+      (should (has-site? '>= '> sites))))
+
   (it "does not suppress a trim lookalike headed by another form"
     (let [sites (m/find-mutations '(choose (> (count v) 10) (subvec v 0 10) v))]
       (should (has-site? '> '>= sites))))

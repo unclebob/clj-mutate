@@ -70,6 +70,13 @@
       (should= 2 (count (set outputs)))
       (should-not= (:node-path (first sites)) (:node-path (second sites)))))
 
+  (it "keeps persistent mutation identities unique across repeated named forms"
+    (let [src "(defn f [] (+ 1 2))\n(defn f [] (+ 1 2))\n"
+          sites (source/discover-mutations src)]
+      (should= (count sites) (count (set (map :mutation-id sites))))
+      (should= ["defn/f" "defn/f#2"]
+               (->> sites (map :form-id) distinct vec))))
+
   (it "rejects a site whose exact node no longer matches"
     (let [src "(def opts {:pretty true})\n"
           site (first (filter #(= true (:original %)) (source/discover-mutations src)))]

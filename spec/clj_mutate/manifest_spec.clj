@@ -73,6 +73,11 @@
       (should-not= (manifest/module-hash a) (manifest/module-hash c))
       (should (re-matches #"[0-9a-f]{64}" (manifest/module-hash a)))))
 
+  (it "assigns unique ids to repeated named top-level forms"
+    (let [forms (manifest/top-level-form-manifest
+                  "(defn f [] 1)\n(defn f [] 2)\n")]
+      (should= ["defn/f" "defn/f#2"] (mapv :id forms))))
+
   (it "marks version-2 verified manifests with matching provenance as trusted"
     (let [provenance {:mutation-rules-version "2" :test-profile "abc"}
           current (manifest/build-embedded-manifest

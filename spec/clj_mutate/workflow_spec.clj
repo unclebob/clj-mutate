@@ -5,6 +5,7 @@
             [clj-mutate.coverage :as coverage]
             [clj-mutate.execution :as execution]
             [clj-mutate.manifest :as manifest]
+            [clj-mutate.project :as project]
             [clj-mutate.report :as report]
             [clj-mutate.runner :as runner]
             [clj-mutate.selection :as selection]
@@ -14,7 +15,18 @@
 (describe "run-mutation-suite"
   (it "returns no results when there are no sites"
     (with-redefs [execution/run-mutations-parallel (fn [& _] (throw (Exception. "should not run")))]
-      (should= [] (workflow/run-mutation-suite [] "src/foo.cljc" "(ns foo)" 30000 nil "clj -M:spec")))))
+      (should= [] (workflow/run-mutation-suite [] "src/foo.cljc" "(ns foo)" 30000 nil "clj -M:spec"))))
+
+  (it "passes effective test roots to mutation workers"
+    (let [received (atom nil)
+          sites [{:index 0}]]
+      (with-redefs [execution/run-mutations-parallel
+                    (fn [_ _ _ _ _ _ _ test-roots]
+                      (reset! received test-roots)
+                      [])]
+        (workflow/run-mutation-suite sites "src/foo.cljc" "(ns foo)" 30000
+                                     nil "clj -M:custom" ["custom-spec"])
+        (should= ["custom-spec"] @received)))))
 
 (describe "run-mutation-testing embeds manifest"
   (it "writes the footer manifest after a full run"
@@ -151,6 +163,38 @@
           (should-not-contain "0/0" output)
           (should= source-with-manifest (slurp temp-path))))
       (.delete temp-file)))
+
+  (it "invalidates an unchanged manifest when effective custom tests change"
+    (let [temp-file (java.io.File/createTempFile "mutant-profile" ".cljc")
+          temp-path (.getPath temp-file)
+          source "(ns test-ns)\n(defn unchanged [] (+ 1 2))\n"
+          old-provenance {:mutation-rules-version "2"
+                          :test-command "clj -M:custom"
+                          :test-roots ["custom-tests"]
+                          :test-profile-fingerprint "old-tests"}
+          prior-manifest (manifest/build-embedded-manifest
+                           source "2026-02-20T08:00:00-06:00"
+                           {:verified? true :provenance old-provenance})
+          coverage-loaded? (atom false)]
+      (spit temp-path (manifest/embed-mutation-manifest source prior-manifest))
+      (try
+        (with-redefs [project/test-profile-roots
+                      (fn [& _] ["custom-tests"])
+                      project/test-profile-fingerprint
+                      (fn [& _] "changed-tests")
+                      coverage/load-coverage
+                      (fn [& _]
+                        (reset! coverage-loaded? true)
+                        {:lines nil :status :coverage-disabled})]
+          (let [context (workflow/mutation-run-context
+                          temp-path true
+                          {:test-command "clj -M:custom"
+                           :coverage-command false
+                           :test-roots ["custom-tests"]})]
+            (should= false (:trusted-manifest? context))
+            (should= false (:module-unchanged? context))
+            (should @coverage-loaded?)))
+        (finally (.delete temp-file)))))
 
   (it "defaults to differential mutation when a manifest exists"
     (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")

@@ -40,7 +40,7 @@
   (it "dispatches to run-mutation-testing for valid input"
     (let [received (atom nil)]
       (with-redefs [workflow/run-mutation-testing
-                    (fn [source-path lines timeout-factor test-command max-workers since-last-run mutate-all mutation-warning reuse-lcov mutation coverage-command]
+                    (fn [source-path lines timeout-factor test-command max-workers since-last-run mutate-all mutation-warning reuse-lcov mutation coverage-command test-roots]
                       (reset! received {:source-path source-path
                                         :lines lines
                                         :timeout-factor timeout-factor
@@ -51,7 +51,8 @@
                                         :mutation-warning mutation-warning
                                         :reuse-lcov reuse-lcov
                                         :mutation mutation
-                                        :coverage-command coverage-command}))]
+                                        :coverage-command coverage-command
+                                        :test-roots test-roots}))]
         (#'core/handle-main-result {:source-path "src/foo.cljc"
                                     :lines #{3}
                                     :timeout-factor 7
@@ -62,7 +63,8 @@
                                     :mutation-warning 75
                                     :reuse-lcov true
                                     :mutation "M002"
-                                    :coverage-command nil})
+                                    :coverage-command nil
+                                    :test-roots ["spec"]})
         (should= {:source-path "src/foo.cljc"
                   :lines #{3}
                   :timeout-factor 7
@@ -73,7 +75,8 @@
                   :mutation-warning 75
                   :reuse-lcov true
                   :mutation "M002"
-                  :coverage-command nil}
+                  :coverage-command nil
+                  :test-roots ["spec"]}
                  @received))))
 
   (it "prints a helpful error when reuse-lcov is requested without an lcov file"

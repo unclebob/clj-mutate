@@ -1,5 +1,6 @@
 (ns clj-mutate.project
   (:require [clj-mutate.digest :as digest]
+            [clojure.edn :as edn]
             [clojure.string :as str])
   (:import [java.io File]))
 
@@ -52,14 +53,156 @@
        (some #(str/ends-with? (.getName file) %)
              [".clj" ".cljc" ".cljs" ".edn"])))
 
+(defn- read-edn-file
+  [^File file]
+  (when (.isFile file)
+    (try
+      (edn/read-string (slurp file))
+      (catch Exception _ nil))))
+
+(defn- command-tokens
+  [command]
+  (->> (str/split (or command "") #"\s+")
+       (remove str/blank?)
+       vec))
+
+(defn- clojure-aliases
+  [command]
+  (->> (command-tokens command)
+       (mapcat (fn [token]
+                 (when-let [[_ aliases] (re-matches #"-[MAXT](:.+)" token)]
+                   (->> (str/split aliases #":")
+                        (remove str/blank?)
+                        (map keyword)))))
+       vec))
+
+(defn- bb-task
+  [command]
+  (let [[executable & args] (command-tokens command)]
+    (when (= "bb" executable)
+      (some #(when-not (str/starts-with? % "-") (keyword %)) args))))
+
+(defn- selected-command-config
+  [dir command]
+  (let [deps (read-edn-file (File. dir "deps.edn"))
+        bb (read-edn-file (File. dir "bb.edn"))
+        aliases (clojure-aliases command)
+        task (bb-task command)]
+    (cond-> {}
+      (seq aliases)
+      (assoc :clojure {:paths (:paths deps)
+                       :deps (:deps deps)
+                       :mvn/repos (:mvn/repos deps)
+                       :aliases (select-keys (:aliases deps) aliases)})
+
+      task
+      (assoc :babashka {:paths (:paths bb)
+                        :deps (:deps bb)
+                        :task (get-in bb [:tasks task])}))))
+
+(defn- root-bearing-config
+  [config]
+  (cond-> {}
+    (:clojure config)
+    (assoc :clojure
+           {:aliases
+            (into {}
+                  (map (fn [[alias details]]
+                         [alias (select-keys details
+                                             [:extra-paths :replace-paths])]))
+                  (get-in config [:clojure :aliases]))})
+
+    (:babashka config)
+    (assoc :babashka
+           (select-keys (:babashka config) [:task]))))
+
+(defn- project-relative-directory
+  [dir path]
+  (let [project-root (.getCanonicalFile (File. dir))
+        candidate (.getCanonicalFile (File. project-root path))
+        root-path (.toPath project-root)
+        candidate-path (.toPath candidate)]
+    (when (and (.isDirectory candidate)
+               (not= root-path candidate-path)
+               (.startsWith candidate-path root-path))
+      (.toString (.relativize root-path candidate-path)))))
+
+(defn- existing-directory-strings
+  [dir value]
+  (->> (tree-seq coll? seq value)
+       (filter string?)
+       (map str/trim)
+       (remove str/blank?)
+       (keep #(project-relative-directory dir %))
+       (remove #(or (= "src" %)
+                    (str/starts-with? % "src/")))
+       distinct
+       sort
+       vec))
+
+(defn test-profile-roots
+  "Return the test roots that form a command's effective test profile. Explicit
+   roots are authoritative; otherwise roots are inferred from the selected
+   deps.edn alias or bb.edn task, with runtime conventions as a fallback for
+   the default command."
+  ([test-command]
+   (test-profile-roots (System/getProperty "user.dir") test-command nil))
+  ([dir test-command]
+   (test-profile-roots dir test-command nil))
+  ([dir test-command explicit-roots]
+   (let [roots (if (seq explicit-roots)
+                 (keep #(project-relative-directory dir %) explicit-roots)
+                 (let [inferred (existing-directory-strings
+                                  dir (root-bearing-config
+                                        (selected-command-config dir test-command)))]
+                   (if (seq inferred)
+                     inferred
+                     (when (= test-command (default-test-command dir))
+                       (test-directories dir)))))]
+     (->> roots
+          (map str)
+          (map str/trim)
+          (remove str/blank?)
+          distinct
+          sort
+          vec))))
+
+(defn commands-share-test-profile?
+  "True when test and coverage commands are tied to the same effective test
+   roots. Supplying explicit roots is an assertion that both commands use that
+   named population; otherwise both command configurations must reveal the
+   same non-empty roots."
+  ([test-command coverage-command]
+   (commands-share-test-profile? (System/getProperty "user.dir")
+                                 test-command coverage-command nil))
+  ([dir test-command coverage-command explicit-roots]
+   (if (seq explicit-roots)
+     (let [declared-count (->> explicit-roots
+                               (map str)
+                               (map str/trim)
+                               (remove str/blank?)
+                               distinct
+                               count)
+           normalized (test-profile-roots dir nil explicit-roots)]
+       (and (pos? declared-count)
+            (= declared-count (count normalized))))
+     (let [test-roots (test-profile-roots dir test-command nil)
+           coverage-roots (test-profile-roots dir coverage-command nil)]
+       (and (seq test-roots)
+            (= test-roots coverage-roots))))))
+
 (defn test-profile-fingerprint
   "Fingerprint the effective command and conventional runtime-specific test
-   roots. Unrelated development aliases in deps.edn are intentionally ignored."
+   roots. Only the selected alias/task configuration is included, so unrelated
+   development aliases in deps.edn remain intentionally ignored."
   ([test-command]
-   (test-profile-fingerprint (System/getProperty "user.dir") test-command))
+   (test-profile-fingerprint (System/getProperty "user.dir") test-command nil))
   ([dir test-command]
+   (test-profile-fingerprint dir test-command nil))
+  ([dir test-command explicit-roots]
    (let [root (File. dir)
-         entries (->> (test-directories dir)
+         roots (test-profile-roots dir test-command explicit-roots)
+         entries (->> roots
                       (mapcat #(file-seq (File. root %)))
                       (filter source-file?)
                       (map (fn [^File file]
@@ -68,6 +211,8 @@
                       (sort-by first)
                       vec)]
      (digest/sha-256 (pr-str {:test-command test-command
+                              :test-roots roots
+                              :selected-config (selected-command-config dir test-command)
                               :files entries})))))
 
 (defn config-file

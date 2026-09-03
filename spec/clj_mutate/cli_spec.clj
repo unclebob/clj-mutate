@@ -25,6 +25,7 @@
                  [[temp-source-path "--lines"] "Missing value for --lines."]
                  [[temp-source-path "--timeout-factor"] "Missing value for --timeout-factor."]
                  [[temp-source-path "--test-command"] "Missing value for --test-command."]
+                 [[temp-source-path "--test-roots"] "Missing value for --test-roots."]
                  [[temp-source-path "--coverage-command"] "Missing value for --coverage-command."]
                  [[temp-source-path "--mutation"] "Missing value for --mutation."]
                  [[temp-source-path "--max-workers"] "Missing value for --max-workers."]
@@ -71,9 +72,10 @@
                   [#(should= 75 (:mutation-warning %))]]
                  [[temp-source-path "--timeout-factor" "7"]
                   [#(should= 7 (:timeout-factor %))]]
-                 [[temp-source-path "--test-command" "clj -M:all-tests" "--no-coverage"]
-                  [#(should= "clj -M:all-tests" (:test-command %))]]
-                 [[temp-source-path "--coverage-command" "clj -M:mutation-cov"]
+                 [[temp-source-path "--test-command" "clj -M:all-tests" "--test-roots" "spec" "--no-coverage"]
+                  [#(should= "clj -M:all-tests" (:test-command %))
+                   #(should= ["spec"] (:test-roots %))]]
+                 [[temp-source-path "--coverage-command" "clj -M:mutation-cov" "--test-roots" "spec"]
                   [#(should= "clj -M:mutation-cov" (:coverage-command %))]]
                  [[temp-source-path "--no-coverage"]
                   [#(should= false (:coverage-command %))]]
@@ -98,6 +100,7 @@
                       [temp-source-path "--scan" "--mutate-all"]
                       [temp-source-path "--scan" "--timeout-factor" "7"]
                       [temp-source-path "--scan" "--test-command" "clj -M:all-tests"]
+                      [temp-source-path "--scan" "--test-roots" "spec"]
                       [temp-source-path "--scan" "--max-workers" "2"]
                       [temp-source-path "--update-manifest" "--scan"]
                       [temp-source-path "--update-manifest" "--lines" "3"]
@@ -120,6 +123,36 @@
         (let [result (cli/validate-args
                        [temp-source-path "--test-command" "clj -M:custom"])]
           (should-contain "requires --coverage-command or --no-coverage" (:error result))))))
+
+  (it "requires discoverable roots for a custom test command"
+    (with-temp-source-path
+      (fn [temp-source-path]
+        (let [result (cli/validate-args
+                       [temp-source-path "--test-command" "true" "--no-coverage"])]
+          (should-contain "must expose test roots" (:error result))))))
+
+  (it "rejects test and coverage aliases with different roots"
+    (with-temp-source-path
+      (fn [temp-source-path]
+        (let [result (cli/validate-args
+                       [temp-source-path
+                        "--test-command" "clj -M:spec"
+                        "--coverage-command" "clj -M:property"])]
+          (should-contain "do not identify the same test roots" (:error result))))))
+
+  (it "rejects missing explicit test roots"
+    (with-temp-source-path
+      (fn [temp-source-path]
+        (should-contain :error
+                        (cli/validate-args
+                          [temp-source-path "--test-roots" "not-a-real-test-root"])))))
+
+  (it "rejects test roots outside the project"
+    (with-temp-source-path
+      (fn [temp-source-path]
+        (should-contain :error
+                        (cli/validate-args
+                          [temp-source-path "--test-roots" ".."])))))
 
   (it "rejects conflicting precise selectors and coverage policies"
     (with-temp-source-path

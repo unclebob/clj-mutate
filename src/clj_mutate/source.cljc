@@ -57,6 +57,9 @@
 (defn- discover-syntax-mutations
   [source-text]
   (let [root (syntax/of-source source-text)
+        form-ids (->> (syntax/top-level-locations root)
+                      (mapv syntax/sexpr)
+                      syntax/top-level-form-ids)
         form-counters (atom {})]
     (loop [loc root
            sites []]
@@ -74,8 +77,7 @@
           (if rule
             (let [local-index (get @form-counters form-index 0)
                   _ (swap! form-counters update form-index (fnil inc 0))
-                  form-loc (syntax/location-at-path root [form-index])
-                  form-id (syntax/top-level-form-id form-index (syntax/sexpr form-loc))
+                  form-id (nth form-ids form-index)
                   form-path (vec (rest path))
                   position (syntax/position loc)
                   site (merge position
