@@ -17,7 +17,7 @@
                   :main-opts ["-m" "crap4clj.core"]}
            :deintroverter {:extra-deps {io.github.unclebob/deintroverter4clj
                                          {:git/url "https://github.com/unclebob/deintroverter4clj.git"
-                                          :git/sha "fe3e8be4d39adfb8dadd3e0de999e1cd815183a2"}}
+                                          :git/sha "cd4df96371a5f51c5ef8c6855cd1dd3fba53bb8a"}}
                            :main-opts ["-m" "deintroverter.core"]}
            :cov {:main-opts ["-m" "speclj.cloverage" "--" "-p" "src" "-s" "spec" "--lcov"]
                  :extra-deps {cloverage/cloverage {:mvn/version "1.2.4"}

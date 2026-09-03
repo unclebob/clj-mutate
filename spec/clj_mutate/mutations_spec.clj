@@ -49,57 +49,62 @@
 
 (describe "equivalent mutant suppression"
   (it "suppresses rand-based comparison mutations"
-    (doseq [[form original mutant]
-            [['(if (< (rand) 0.5) :a :b) '< '<=]
-             ['(if (<= (rand) 0.5) :a :b) '<= '<]
-             ['(if (> (rand) 0.5) :a :b) '> '>=]]]
-      (let [sites (m/find-mutations form)]
-        (should= #{['if 'if-not]} (site-pairs sites))
-        (should-not (has-site? original mutant sites)))))
+    (let [lt-sites (m/find-mutations '(if (< (rand) 0.5) :a :b))
+          lte-sites (m/find-mutations '(if (<= (rand) 0.5) :a :b))
+          gt-sites (m/find-mutations '(if (> (rand) 0.5) :a :b))]
+      (should= #{['if 'if-not]} (site-pairs lt-sites))
+      (should-not (has-site? '< '<= lt-sites))
+      (should= #{['if 'if-not]} (site-pairs lte-sites))
+      (should-not (has-site? '<= '< lte-sites))
+      (should= #{['if 'if-not]} (site-pairs gt-sites))
+      (should-not (has-site? '> '>= gt-sites))))
 
   (it "does not suppress non-rand comparison mutations"
-    (doseq [[form original mutant]
-            [['(if (< x 10) :a :b) '< '<=]
-             ['(if (> hits 0) :a :b) '> '>=]]]
-      (let [sites (m/find-mutations form)]
-        (should (has-site? original mutant sites))))))
+    (let [lt-sites (m/find-mutations '(if (< x 10) :a :b))
+          gt-sites (m/find-mutations '(if (> hits 0) :a :b))]
+      (should (has-site? '< '<= lt-sites))
+      (should (has-site? '> '>= gt-sites)))))
 
 (describe "rand-nth guard suppression"
   (it "suppresses mutations inside the rand-nth single-element guard"
-    (let [suppressed-sites (m/find-mutations '(if (= 1 (count v)) (first v) (rand-nth v)))]
-      (doseq [[control-form original mutant]
-              [['(if (= 1 x) :a :b) '= 'not=]
-               ['(if (> x 0) (first v) (rand-nth v)) 'if 'if-not]
-               ['(if (= 1 x) :a :b) 1 0]]]
-        (let [control-sites (m/find-mutations control-form)]
-          (should (has-site? original mutant control-sites))
-          (should-not (has-site? original mutant suppressed-sites))))))
+    (let [suppressed-sites (m/find-mutations '(if (= 1 (count v)) (first v) (rand-nth v)))
+          equality-control-sites (m/find-mutations '(if (= 1 x) :a :b))
+          conditional-control-sites (m/find-mutations '(if (> x 0) (first v) (rand-nth v)))]
+      (should (has-site? '= 'not= equality-control-sites))
+      (should-not (has-site? '= 'not= suppressed-sites))
+      (should (has-site? 'if 'if-not conditional-control-sites))
+      (should-not (has-site? 'if 'if-not suppressed-sites))
+      (should (has-site? 1 0 equality-control-sites))
+      (should-not (has-site? 1 0 suppressed-sites))))
 
   (it "does not suppress mutations outside the rand-nth guard"
-    (doseq [[form original mutant]
-            [['(if (= 1 x) :a :b) '= 'not=]
-             ['(if (> x 0) :a :b) 'if 'if-not]]]
-      (let [sites (m/find-mutations form)]
-        (should (has-site? original mutant sites))))))
+    (let [equality-sites (m/find-mutations '(if (= 1 x) :a :b))
+          conditional-sites (m/find-mutations '(if (> x 0) :a :b))]
+      (should (has-site? '= 'not= equality-sites))
+      (should (has-site? 'if 'if-not conditional-sites)))))
 
 (describe "rand-nth literal pool suppression"
   (it "suppresses literal-pool mutations inside rand-nth"
-    (doseq [[suppressed-form control-form original mutant]
-            [['(rand-nth [0 1]) [0 1] 0 1]
-             ['(rand-nth [0 1]) [0 1] 1 0]
-             ['(rand-nth [[-1 0] [1 0]]) '(vector [-1 0] [1 0]) 0 1]]]
-      (let [suppressed-sites (m/find-mutations suppressed-form)
-            control-sites (m/find-mutations control-form)]
-        (should (has-site? original mutant control-sites))
-        (should-not (has-site? original mutant suppressed-sites)))))
+    (let [flat-suppressed-sites (m/find-mutations '(rand-nth [0 1]))
+          flat-control-sites (m/find-mutations [0 1])
+          nested-suppressed-sites (m/find-mutations '(rand-nth [[-1 0] [1 0]]))
+          nested-control-sites (m/find-mutations '(vector [-1 0] [1 0]))]
+      (should (has-site? 0 1 flat-control-sites))
+      (should-not (has-site? 0 1 flat-suppressed-sites))
+      (should (has-site? 1 0 flat-control-sites))
+      (should-not (has-site? 1 0 flat-suppressed-sites))
+      (should (has-site? 0 1 nested-control-sites))
+      (should-not (has-site? 0 1 nested-suppressed-sites))))
 
   (it "does not suppress literal-pool mutations outside rand-nth"
-    (doseq [form ['(+ x 0)
-                  '(let [x 0] (+ x 1))
-                  '[[-1 0] [1 0]]
-                  '(let [dirs [[-1 0] [1 0]]] dirs)]]
-      (let [sites (m/find-mutations form)]
-        (should (has-site? 0 1 sites))))))
+    (let [addition-sites (m/find-mutations '(+ x 0))
+          let-sites (m/find-mutations '(let [x 0] (+ x 1)))
+          nested-vector-sites (m/find-mutations '[[-1 0] [1 0]])
+          bound-vector-sites (m/find-mutations '(let [dirs [[-1 0] [1 0]]] dirs))]
+      (should (has-site? 0 1 addition-sites))
+      (should (has-site? 0 1 let-sites))
+      (should (has-site? 0 1 nested-vector-sites))
+      (should (has-site? 0 1 bound-vector-sites)))))
 
 (describe "subvec trim boundary suppression"
   (it "suppresses > -> >= inside (if (> (count v) 10) (subvec ...))"
