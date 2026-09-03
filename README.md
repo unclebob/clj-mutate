@@ -4,29 +4,48 @@ Mutation testing for Clojure. Discovers mutation sites, applies each one, runs y
 
 ## Setup
 
-Use either a Babashka `bb.edn` task or a normal Clojure `deps.edn` alias.
+Use either a Babashka `bb.edn` task or normal Clojure `deps.edn` aliases.
 Babashka is recommended for day-to-day use because it starts much faster and avoids JVM startup overhead in the `clj-mutate` launcher.
 The `clj` launcher remains fully supported and is useful as a compatibility fallback when debugging runtime-specific behavior.
+The default commands use [Speclj](https://github.com/slagyr/speclj); another test runner can be used with `--test-command` as long as it returns a conventional process exit status.
 
-For Babashka, add a `mutate` task to your project's `bb.edn`:
+For Babashka, add the clj-mutate sources and dependencies along with `spec` and `mutate` tasks:
 
 ```clojure
-{:paths ["src" "/path/to/clj-mutate/src"]
- :tasks {mutate {:doc "Run clj-mutate"
+{:paths ["src" "spec" "/path/to/clj-mutate/src"]
+ :deps {org.clojure/tools.reader {:mvn/version "1.4.2"}
+        rewrite-clj/rewrite-clj {:mvn/version "1.2.55"}
+        speclj/speclj {:mvn/version "3.12.2"}}
+ :tasks {spec {:doc "Run specs"
+               :requires ([speclj.main :as speclj])
+               :task (apply speclj/-main "-c" "spec" *command-line-args*)}
+         mutate {:doc "Run clj-mutate"
                  :requires ([clj-mutate.core :as core])
                  :task (apply core/-main *command-line-args*)}}}
 ```
 
-For normal Clojure, add a `:mutate` alias to your project's `deps.edn`:
+For normal Clojure, add matching `:spec`, `:cov`, and `:mutate` aliases. The `:cov` alias is optional if you intend to use `--no-coverage`:
 
 ```clojure
-:mutate {:main-opts ["-m" "clj-mutate.core"]
-         :extra-deps {clj-mutate/clj-mutate {:local/root "/path/to/clj-mutate"}
-                      org.clojure/tools.reader {:mvn/version "1.4.2"}}
+{:paths ["src"]
+ :aliases
+ {:spec {:main-opts ["-m" "speclj.main" "-c" "spec"]
+         :extra-deps {speclj/speclj {:mvn/version "3.12.2"}}
          :extra-paths ["spec"]}
+
+  :cov {:main-opts ["-m" "speclj.cloverage"
+                    "-c" "--tag" "~no-mutate" "spec"
+                    "--" "-p" "src" "-s" "spec" "--lcov"]
+        :extra-deps {cloverage/cloverage {:mvn/version "1.2.4"}
+                     speclj/speclj {:mvn/version "3.12.2"}}
+        :extra-paths ["spec"]}
+
+  :mutate {:main-opts ["-m" "clj-mutate.core"]
+           :extra-deps {clj-mutate/clj-mutate
+                        {:local/root "/path/to/clj-mutate"}}}}}
 ```
 
-Requires [Speclj](https://github.com/slagyr/speclj) as your test runner.
+The `:spec` and `:cov` aliases above both select `spec`, satisfying the requirement that coverage and mutation workers use the same test population.
 
 ## Usage
 
@@ -83,7 +102,9 @@ clj -M:mutate src/myapp/foo.cljc \
 
 # Explicitly run every selected mutant without LCOV filtering
 clj -M:mutate src/myapp/foo.cljc \
-  --test-command "clj -M:mutation-spec" --no-coverage
+  --test-command "clj -M:mutation-spec" \
+  --test-roots "spec" \
+  --no-coverage
 
 # Show command usage help
 clj -M:mutate --help
@@ -91,16 +112,19 @@ bb mutate --help
 ```
 
 The tool automatically:
-- Runs a baseline test (`clj -M:spec --tag ~no-mutate`) to verify all included specs pass unmodified
+
+- Runs the runtime-specific baseline (`clj -M:spec --tag ~no-mutate` or `bb spec --tag ~no-mutate`) to verify all included specs pass unmodified
 - Applies each mutation, runs all specs with a timeout (`--timeout-factor`, default 10x baseline)
 - Targets exact concrete-syntax nodes, preserving comments and formatting
 - Restores the original file after each mutation
-- Writes a verified embedded footer manifest only after a successful mutation run
+- Writes a verified embedded footer manifest only after an unscoped full or differential run kills every selected mutant and leaves no uncovered mutations
 - Updates that embedded manifest after successful differential runs as well as full runs
 - Defaults to differential mutation when that footer manifest is already present
 - Prints a warning when mutation count exceeds `--mutation-warning` (default `100`)
 - Excludes specs tagged `:no-mutate` by default so mutation workers do not recursively launch nested mutation runs
 - Can reuse existing LCOV data with `--reuse-lcov`
+
+Runs narrowed with `--lines` or `--mutation` never update the verified manifest, even when their selected mutants are killed.
 
 `--scan` is the fast structural mode. It skips coverage, skips test execution, and reports:
 - total mutation sites
@@ -216,8 +240,9 @@ Known-equivalent mutations (e.g. comparisons on `(rand)`, constants inside `rand
 If a `:cov` alias is configured with [Cloverage](https://github.com/cloverage/cloverage) and `--lcov` output, the tool reads `target/coverage/lcov.info` to skip mutations on uncovered lines.
 
 Coverage freshness and provenance are checked automatically:
-- If `target/coverage/lcov.info` is missing, `clj-mutate` regenerates it with `clj -M:cov --lcov`.
-- If LCOV is older than current source/spec inputs, `clj-mutate` regenerates it with `clj -M:cov --lcov`.
+
+- On JVM Clojure, missing or stale `target/coverage/lcov.info` is regenerated with `clj -M:cov --lcov`.
+- Babashka has no default coverage command. It runs selected mutations without LCOV filtering unless `--coverage-command` is supplied.
 - `target/coverage/clj-mutate.edn` records the coverage command, test command, and effective test-profile fingerprint.
 - The selected `deps.edn` alias or `bb.edn` task and its effective test-root files are fingerprinted; unrelated aliases are ignored.
 - A custom `--test-command` requires a matching `--coverage-command`, or `--no-coverage` to disable LCOV filtering explicitly. If roots cannot be inferred from the selected aliases/tasks, declare the shared population with `--test-roots`; roots must be existing directories relative to the project.
@@ -234,10 +259,10 @@ With `--reuse-lcov`:
 
 ```clojure
 :cov {:main-opts ["-m" "speclj.cloverage"
-                  "--tag" "~no-mutate" "spec" "spec-jvm"
+                  "-c" "--tag" "~no-mutate" "spec" "spec-jvm"
                   "--" "-p" "src" "-s" "spec" "-s" "spec-jvm" "--lcov"]
       :extra-deps {cloverage/cloverage {:mvn/version "1.2.4"}
-                   speclj/speclj {:mvn/version "3.10.0"}}
+                   speclj/speclj {:mvn/version "3.12.2"}}
       :extra-paths ["spec" "spec-jvm"]}
 ```
 

@@ -39,7 +39,11 @@
               :missing-source (should-contain :error result)
               :help (do
                       (should= true (:help result))
-                      (should-contain "Usage:" (:usage result)))
+                      (should-contain "Usage:" (:usage result))
+                      (should-contain "Babashka: tests use bb spec" (:usage result))
+                      (should-contain "coverage is disabled until configured" (:usage result))
+                      (should-contain "A custom --test-command requires --coverage-command or --no-coverage" (:usage result))
+                      (should-contain "--lines or --mutation do not update the verified manifest" (:usage result)))
               :missing-file (should-contain :error result)
               :error (should-contain :error result)
               (should= expected (:error result))))))))

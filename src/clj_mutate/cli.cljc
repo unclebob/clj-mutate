@@ -9,25 +9,35 @@
 
 (def usage-summary
   (str
-    "Usage: clj -M:mutate <source-file.cljc> [options]\n"
-    "   or: bb mutate <source-file.cljc> [options]\n"
+    "Usage: clj -M:mutate <source-file> [options]\n"
+    "   or: bb mutate <source-file> [options]\n"
     "\n"
     "Options:\n"
     "  --scan                Report mutation counts without running tests or coverage\n"
-    "  --update-manifest     Rewrite the embedded manifest without running mutations\n"
-    "  --reuse-lcov          Reuse existing LCOV data without refreshing coverage\n"
-    "  --coverage-command CMD Command that generates LCOV for the mutation test profile\n"
-    "  --no-coverage         Run all selected mutants without LCOV filtering\n"
-    "  --lines L1,L2,...      Run only mutations on these source lines\n"
-    "  --mutation ID          Run one mutation by M-number or persistent mutation ID\n"
+    "  --update-manifest     Write an unverified manifest without running mutations\n"
+    "  --reuse-lcov          Reuse matching LCOV without refreshing coverage\n"
+    "  --coverage-command CMD Command that generates LCOV for the worker test profile\n"
+    "  --no-coverage         Disable LCOV filtering and run all selected mutants\n"
+    "  --lines L1,L2,...     Run only mutations on these source lines\n"
+    "  --mutation ID         Run one mutation by M-number or persistent mutation ID\n"
     "  --since-last-run       Run only mutations in changed top-level forms since last successful run\n"
     "  --mutate-all           Run all covered mutations even if a manifest exists\n"
     "  --mutation-warning N   Warn when more than N mutations are found (default 100)\n"
     "  --timeout-factor N     Mutation timeout multiplier vs baseline (default 10)\n"
-    "  --test-command CMD     Test command to run (default: bb spec or clj -M:spec --tag ~no-mutate)\n"
-    "  --test-roots D1,D2     Test roots used by both test and coverage commands\n"
+    "  --test-command CMD     Command run for the baseline and every mutant\n"
+    "  --test-roots D1,D2     Existing project-relative roots shared by test and coverage\n"
     "  --max-workers N        Limit parallel workers to N (positive integer)\n"
-    "  --help                 Print this help and exit\n"))
+    "  --help                 Print this help and exit\n"
+    "\n"
+    "Runtime defaults:\n"
+    "  JVM Clojure: tests use clj -M:spec --tag ~no-mutate; coverage uses clj -M:cov --lcov.\n"
+    "  Babashka: tests use bb spec --tag ~no-mutate; coverage is disabled until configured.\n"
+    "\n"
+    "Profile and manifest rules:\n"
+    "  A custom --test-command requires --coverage-command or --no-coverage.\n"
+    "  Test and coverage commands must select the same roots. If they cannot be inferred\n"
+    "  from the selected deps.edn alias or bb.edn task, provide --test-roots.\n"
+    "  Runs narrowed by --lines or --mutation do not update the verified manifest.\n"))
 
 (def default-options
   {:source-path nil
