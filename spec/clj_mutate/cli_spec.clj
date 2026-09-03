@@ -43,7 +43,8 @@
                       (should-contain "Babashka: tests use bb spec" (:usage result))
                       (should-contain "coverage is disabled until configured" (:usage result))
                       (should-contain "A custom --test-command requires --coverage-command or --no-coverage" (:usage result))
-                      (should-contain "--lines or --mutation do not update the verified manifest" (:usage result)))
+                      (should-contain "--lines, --mutation, or a -n/--namespace test command" (:usage result))
+                      (should-contain "--scan and --update-manifest skip test/coverage" (:usage result)))
               :missing-file (should-contain :error result)
               :error (should-contain :error result)
               (should= expected (:error result))))))))
@@ -79,8 +80,8 @@
                  [[temp-source-path "--test-command" "clj -M:all-tests" "--test-roots" "spec" "--no-coverage"]
                   [#(should= "clj -M:all-tests" (:test-command %))
                    #(should= ["spec"] (:test-roots %))]]
-                 [[temp-source-path "--coverage-command" "clj -M:mutation-cov" "--test-roots" "spec"]
-                  [#(should= "clj -M:mutation-cov" (:coverage-command %))]]
+                 [[temp-source-path "--test-command" "clj -M:spec" "--coverage-command" "clj -M:cov"]
+                  [#(should= "clj -M:cov" (:coverage-command %))]]
                  [[temp-source-path "--no-coverage"]
                   [#(should= false (:coverage-command %))]]
                  [[temp-source-path "--mutation" "M017"]
@@ -143,6 +144,25 @@
                         "--test-command" "clj -M:spec"
                         "--coverage-command" "clj -M:property"])]
           (should-contain "do not identify the same test roots" (:error result))))))
+
+  (it "does not let --test-roots paper over mismatched inferred populations"
+    (with-temp-source-path
+      (fn [temp-source-path]
+        (let [result (cli/validate-args
+                       [temp-source-path
+                        "--test-command" "clj -M:spec"
+                        "--coverage-command" "clj -M:property"
+                        "--test-roots" "spec"])]
+          (should-contain "do not identify the same test roots" (:error result))))))
+
+  (it "skips test/coverage profile checks for --scan and --update-manifest"
+    (with-temp-source-path
+      (fn [temp-source-path]
+        (with-redefs [project/commands-share-test-profile? (constantly false)]
+          (doseq [args [[temp-source-path "--scan"]
+                        [temp-source-path "--update-manifest"]]]
+            (let [result (cli/validate-args args)]
+              (should-not-contain :error result)))))))
 
   (it "rejects missing explicit test roots"
     (with-temp-source-path

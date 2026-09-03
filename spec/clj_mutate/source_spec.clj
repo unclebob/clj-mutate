@@ -40,6 +40,21 @@
           eq-sites (filter #(and (= (:original %) '=) (= (:mutant %) 'not=)) sites)]
       (should= 0 (count eq-sites))))
 
+  (it "discovers head mutations inside #() reader macros"
+    (let [src "(defn f [item] #(= item %))\n"
+          sites (source/discover-mutations src)
+          eq-site (first (filter #(= '= (:original %)) sites))]
+      (should-not-be-nil eq-site)
+      (should= 'not= (:mutant eq-site))
+      (should-contain "#(not= item %)" (source/mutate-source-text src eq-site))))
+
+  (it "discovers arithmetic and constant mutations inside #()"
+    (let [src "(defn f [x] #(+ % 1))\n"
+          sites (source/discover-mutations src)
+          pairs (set (map (juxt :original :mutant) sites))]
+      (should (contains? pairs ['+ '-]))
+      (should (contains? pairs [1 0]))))
+
   (it "0 does not match inside 10"
     (let [src "(defn f [] (+ 10 x))\n"
           sites (source/discover-mutations src)

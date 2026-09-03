@@ -89,7 +89,61 @@
                      50))]
       (should-contain "Previous mutation test: 2026-01-01T00:00:00Z" output)
       (should-contain "Reusing fresh LCOV from target/coverage/lcov.info" output)
-      (should-not-contain "stale" output))))
+      (should-not-contain "stale" output)))
+
+  (it "does not report LCOV covered/uncovered counts when coverage is disabled"
+    (let [header {:all-sites [{:line 3} {:line 8}]
+                  :covered-sites [{:line 3} {:line 8}]
+                  :uncovered []
+                  :changed-mutation-sites 2
+                  :manifest-exists? false
+                  :module-hash-changed? nil
+                  :reuse-lcov false
+                  :coverage-status {:status :coverage-disabled}
+                  :surface-area-counts {:new-form-mutations 2
+                                        :manifest-violating-form-mutations 0}}
+          output (with-out-str
+                   (report/print-run-header
+                     "src/foo.cljc"
+                     nil
+                     header
+                     nil
+                     false
+                     nil
+                     false
+                     [{:line 3} {:line 8}]
+                     50))]
+      (should-contain "Coverage filtering disabled; 2 located sites will be tested." output)
+      (should-not-contain "Covered mutation sites:" output)
+      (should-not-contain "Uncovered mutation sites:" output)))
+
+  (it "prints coverage command output after a failed generation"
+    (let [header {:all-sites []
+                  :covered-sites []
+                  :uncovered []
+                  :changed-mutation-sites 0
+                  :manifest-exists? false
+                  :module-hash-changed? nil
+                  :reuse-lcov false
+                  :coverage-status {:status :missing
+                                    :coverage-command-result {:exit 7 :out "cloverage boom\n" :err "exit 7\n" :ok? false}}
+                  :surface-area-counts {:new-form-mutations 0
+                                        :manifest-violating-form-mutations 0}}
+          output (with-out-str
+                   (report/print-run-header
+                     "src/foo.cljc"
+                     nil
+                     header
+                     nil
+                     false
+                     nil
+                     false
+                     []
+                     50))]
+      (should-contain "Coverage data is missing and no usable LCOV file was generated." output)
+      (should-contain "Coverage command exited 7." output)
+      (should-contain "cloverage boom" output)
+      (should-contain "exit 7" output))))
 
 (describe "print-uncovered"
   (it "prints coverage gaps when uncovered mutations exist"

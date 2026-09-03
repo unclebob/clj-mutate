@@ -24,6 +24,16 @@
   (it "rejects head-position rule when symbol is not first"
     (should-not (m/matches-rule? {:original '+ :position :head} {:parent '(foo + 2)} '+)))
 
+  (it "matches a head symbol whose zipper parent is an expanded #() fn*"
+    (should (m/matches-rule? {:original '= :position :head}
+                             {:parent '(fn* [p1] (= item p1))}
+                             '=)))
+
+  (it "does not treat non-head children of #() as operators"
+    (should-not (m/matches-rule? {:original '= :position :head}
+                                 {:parent '(fn* [p1] (= item p1))}
+                                 'item)))
+
   (it "matches an :any-position rule anywhere"
     (should (m/matches-rule? {:original true :position :any} {:parent '(if true 1)} true))))
 

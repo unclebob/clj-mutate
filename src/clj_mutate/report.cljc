@@ -28,8 +28,25 @@
                                       (ZoneId/systemDefault))
              (DateTimeFormatter/ofPattern "yyyy-MM-dd HH:mm:ss z"))))
 
+(defn- print-coverage-command-output
+  [{:keys [exit out err ok?] :as result}]
+  (when result
+    (when (and (some? exit) (not ok?))
+      (println (format "Coverage command exited %d." exit)))
+    (when-not (str/blank? out)
+      (println "Coverage command stdout:")
+      (print out)
+      (when-not (str/ends-with? out "\n")
+        (println)))
+    (when-not (str/blank? err)
+      (println "Coverage command stderr:")
+      (print err)
+      (when-not (str/ends-with? err "\n")
+        (println)))))
+
 (defn- print-coverage-status
-  [{:keys [status lcov-path last-modified]}]
+  [{:keys [status lcov-path last-modified coverage-command-result
+           coverage-exit-nonzero?]}]
   (case status
     :fresh
     (println (format "Using fresh LCOV generated %s for the requested mutation test profile."
@@ -44,14 +61,22 @@
                      (human-time last-modified)))
 
     :regenerated
-    (println (format "Generated LCOV for the requested mutation test profile at %s."
-                     (human-time last-modified)))
+    (do
+      (println (format "Generated LCOV for the requested mutation test profile at %s."
+                       (human-time last-modified)))
+      (when coverage-exit-nonzero?
+        (println "Coverage command exited non-zero; using the LCOV it wrote.")
+        (print-coverage-command-output coverage-command-result)))
 
     :refresh-failed
-    (println "Coverage generation failed; existing LCOV was not trusted.")
+    (do
+      (println "Coverage generation failed; existing LCOV was not trusted.")
+      (print-coverage-command-output coverage-command-result))
 
     :missing
-    (println "Coverage data is missing and no usable LCOV file was generated.")
+    (do
+      (println "Coverage data is missing and no usable LCOV file was generated.")
+      (print-coverage-command-output coverage-command-result))
 
     :coverage-disabled
     (println "No coverage command is configured; running mutations without LCOV filtering.")
@@ -59,10 +84,14 @@
     nil))
 
 (defn- print-site-counts
-  [all-sites covered-sites uncovered changed-mutation-sites]
+  [all-sites covered-sites uncovered changed-mutation-sites coverage-status]
   (println (format "Total mutation sites: %d" (count all-sites)))
-  (println (format "Covered mutation sites: %d" (count covered-sites)))
-  (println (format "Uncovered mutation sites: %d" (count uncovered)))
+  (if (= :coverage-disabled (:status coverage-status))
+    (println (format "Coverage filtering disabled; %d located sites will be tested."
+                     (count covered-sites)))
+    (do
+      (println (format "Covered mutation sites: %d" (count covered-sites)))
+      (println (format "Uncovered mutation sites: %d" (count uncovered)))))
   (println (format "Changed mutation sites: %d" changed-mutation-sites)))
 
 (defn- print-manifest-status
@@ -113,7 +142,7 @@
      (println (format "=== Mutation Testing: %s ===" source-path))
      (print-previous-mutation-test prev-date)
      (print-coverage-status coverage-status)
-     (print-site-counts all-sites covered-sites uncovered changed-mutation-sites)
+     (print-site-counts all-sites covered-sites uncovered changed-mutation-sites coverage-status)
      (print-manifest-status manifest-exists? module-hash-changed?)
      (print-surface-area (:surface-area-counts info))
      (print-mutation-warning warning-threshold (count all-sites))
@@ -250,6 +279,10 @@
 (defn print-manifest-updated
   [source-path]
   (println (str "Updated unverified manifest: " source-path)))
+
+(defn print-verified-manifest-skipped
+  []
+  (println "Not writing a verified manifest because the test command selects namespaces with -n/--namespace."))
 
 ;; clj-mutate-manifest-begin
 ;; {:version 1, :tested-at "2026-09-02T15:18:37.279832-05:00", :module-hash "144987029", :forms []}

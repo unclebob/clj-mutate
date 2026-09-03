@@ -40,6 +40,24 @@
     (with-redefs [project/running-on-babashka? (constantly true)]
       (should= ["spec" "spec-bb"] (project/test-directories))))
 
+  (it "ignores conventional spec directories that contain no Clojure sources"
+    (let [dir (str "target/test-markdown-spec-" (System/nanoTime))
+          spec-dir (File. dir "spec")
+          test-dir (File. dir "test")]
+      (.mkdirs spec-dir)
+      (.mkdirs test-dir)
+      (spit (File. spec-dir "notes.md") "# design notes\n")
+      (spit (File. test-dir "sample_test.clj") "(ns sample-test)\n")
+      (try
+        (with-redefs [project/running-on-babashka? (constantly false)]
+          (should= ["test"] (project/test-directories dir)))
+        (finally
+          (.delete (File. spec-dir "notes.md"))
+          (.delete (File. test-dir "sample_test.clj"))
+          (.delete spec-dir)
+          (.delete test-dir)
+          (.delete (File. dir))))))
+
   (it "fingerprints effective tests but ignores unrelated deps.edn changes"
     (let [dir (str "target/test-profile-" (System/nanoTime))
           spec-dir (File. dir "spec")
@@ -96,7 +114,7 @@
         (should-not
           (project/commands-share-test-profile?
             dir "clj -M:mutation-spec" "clj -M:mutation-cov" nil))
-        (should
+        (should-not
           (project/commands-share-test-profile?
             dir "clj -M:mutation-spec" "clj -M:mutation-cov" ["spec"]))
         (finally
@@ -113,7 +131,34 @@
         (should-not
           (project/commands-share-test-profile? dir "test" "coverage" [".."]))
         (finally
-          (.delete (File. dir)))))))
+          (.delete (File. dir))))))
+
+  (it "uses explicit roots only when commands cannot infer a population"
+    (let [dir (str "target/test-profile-explicit-" (System/nanoTime))
+          tests (File. dir "unit-tests")]
+      (.mkdirs tests)
+      (try
+        (spit (File. dir "deps.edn") "{}\n")
+        (should
+          (project/commands-share-test-profile?
+            dir "true" "true" ["unit-tests"]))
+        (should-not
+          (project/commands-share-test-profile?
+            dir "true" "true" nil))
+        (finally
+          (.delete (File. dir "deps.edn"))
+          (.delete tests)
+          (.delete (File. dir))))))
+
+  (it "detects namespace-scoped test commands"
+    (should (project/namespace-scoped-test-command?
+              "clojure -M:unit -n stella.integration-method-test"))
+    (should (project/namespace-scoped-test-command?
+              "clj -M:test --namespace foo.bar"))
+    (should-not (project/namespace-scoped-test-command?
+                  "clj -M:spec --tag ~no-mutate"))
+    (should-not (project/namespace-scoped-test-command?
+                  "clojure -M:unit"))))
 
 (describe "config-file"
   (it "returns bb.edn for bb projects"

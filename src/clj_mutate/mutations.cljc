@@ -117,6 +117,25 @@
    {:id :constant/zero-to-one :original 0 :mutant 1 :category :constant :position :any :suppress-when [rand-nth-single-element-guard? inside-rand-nth-literal?]}
    {:id :constant/one-to-zero :original 1 :mutant 0 :category :constant :position :any :suppress-when [rand-nth-single-element-guard? inside-rand-nth-literal?]}])
 
+(defn- fn*-body
+  "Body of an expanded (fn* [args] body) form. rewrite-clj sexpr of #() uses
+   this shape, and zipper children of :fn are the body's children, so the
+   parent of a head symbol like = in #(= item %) is the fn* form."
+  [parent]
+  (when (and (seq? parent)
+             (= 'fn* (first parent)))
+    (last parent)))
+
+(defn- head-position?
+  "True when node is the operator of parent, or of a #() body's list when the
+   zipper parent is the expanded fn* form rather than that inner list."
+  [parent node]
+  (or (and (seq? parent)
+           (= node (first parent)))
+      (let [body (fn*-body parent)]
+        (and (seq? body)
+             (= node (first body))))))
+
 (defn matches-rule?
   "True if rule matches node. For :head rules, node must be
    a list/seq and the symbol must be its first element.
@@ -128,8 +147,7 @@
                 (some #(% context) suppressors)))
          (or (= :any (:position rule))
              (and (= :head (:position rule))
-                  (seq? parent)
-                  (= node (first parent)))))))
+                  (head-position? parent node))))))
 
 (defn matching-rule
   "Return the first mutation rule matching node in context."

@@ -37,21 +37,30 @@
   (when-not (running-on-babashka?)
     "clj -M:cov --lcov"))
 
-(defn test-directories
-  "Return the conventional test roots for the current runtime."
-  ([] (test-directories (System/getProperty "user.dir")))
-  ([dir]
-   (->> (if (running-on-babashka?)
-          ["spec" "spec-bb"]
-          ["spec" "spec-jvm"])
-        (filter #(-> (File. (str dir "/" %)) .isDirectory))
-        vec)))
-
 (defn- source-file?
   [^File file]
   (and (.isFile file)
        (some #(str/ends-with? (.getName file) %)
              [".clj" ".cljc" ".cljs" ".edn"])))
+
+(defn- contains-source-files?
+  [^File dir]
+  (boolean (some source-file? (file-seq dir))))
+
+(defn test-directories
+  "Return the conventional test roots for the current runtime that actually
+   contain Clojure sources. Markdown-only spec/ notes are ignored; clojure.test
+   projects can use test/."
+  ([] (test-directories (System/getProperty "user.dir")))
+  ([dir]
+   (->> (if (running-on-babashka?)
+          ["spec" "spec-bb" "test"]
+          ["spec" "spec-jvm" "test"])
+        (filter (fn [name]
+                  (let [candidate (File. (str dir "/" name))]
+                    (and (.isDirectory candidate)
+                         (contains-source-files? candidate)))))
+        vec)))
 
 (defn- read-edn-file
   [^File file]
@@ -169,27 +178,31 @@
 
 (defn commands-share-test-profile?
   "True when test and coverage commands are tied to the same effective test
-   roots. Supplying explicit roots is an assertion that both commands use that
-   named population; otherwise both command configurations must reveal the
-   same non-empty roots."
+   roots. Explicit roots fill in only when a command cannot infer a population;
+   they do not paper over two commands that infer different roots."
   ([test-command coverage-command]
    (commands-share-test-profile? (System/getProperty "user.dir")
                                  test-command coverage-command nil))
   ([dir test-command coverage-command explicit-roots]
-   (if (seq explicit-roots)
-     (let [declared-count (->> explicit-roots
-                               (map str)
-                               (map str/trim)
-                               (remove str/blank?)
-                               distinct
-                               count)
-           normalized (test-profile-roots dir nil explicit-roots)]
-       (and (pos? declared-count)
-            (= declared-count (count normalized))))
-     (let [test-roots (test-profile-roots dir test-command nil)
-           coverage-roots (test-profile-roots dir coverage-command nil)]
-       (and (seq test-roots)
-            (= test-roots coverage-roots))))))
+   (let [inferred-test (test-profile-roots dir test-command nil)
+         inferred-coverage (test-profile-roots dir coverage-command nil)
+         declared (when (seq explicit-roots)
+                    (test-profile-roots dir nil explicit-roots))]
+     (cond
+       (and (seq inferred-test) (seq inferred-coverage))
+       (= inferred-test inferred-coverage)
+
+       (seq declared)
+       (and (or (empty? inferred-test) (= inferred-test declared))
+            (or (empty? inferred-coverage) (= inferred-coverage declared)))
+
+       :else
+       false))))
+
+(defn namespace-scoped-test-command?
+  "True when the command selects namespaces with -n or --namespace."
+  [command]
+  (boolean (some #{"-n" "--namespace"} (command-tokens command))))
 
 (defn test-profile-fingerprint
   "Fingerprint the effective command and conventional runtime-specific test

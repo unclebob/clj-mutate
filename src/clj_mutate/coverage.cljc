@@ -23,11 +23,23 @@
     (str/split (str/trim command) #"\s+")))
 
 (defn run-coverage!
-  "Run coverage-command. Returns true on success."
+  "Run coverage-command. Returns {:exit :out :err :ok?} or nil when blank."
   ([] (run-coverage! (project/default-coverage-command)))
   ([coverage-command]
    (when-let [argv (command->argv coverage-command)]
-     (zero? (:exit (apply shell/sh argv))))))
+     (let [result (apply shell/sh argv)]
+       (assoc result :ok? (zero? (:exit result 1)))))))
+
+(defn- normalize-coverage-result
+  [result]
+  (cond
+    (nil? result) {:exit 1 :out "" :err "" :ok? false}
+    (true? result) {:exit 0 :out "" :err "" :ok? true}
+    (false? result) {:exit 1 :out "" :err "" :ok? false}
+    (map? result) (assoc result :ok? (if (contains? result :ok?)
+                                       (boolean (:ok? result))
+                                       (zero? (:exit result 1))))
+    :else {:exit 1 :out "" :err (str result) :ok? false}))
 
 (defn- newest-file-mtime
   "Return the newest mtime among regular files under dir, or 0."
@@ -38,20 +50,26 @@
     0))
 
 (defn- newest-input-mtime
-  "Return newest mtime across source and conventional source/spec roots."
-  [source-path]
-  (let [source-file (File. source-path)
-        source-mtime (if (.exists source-file) (.lastModified source-file) 0)
-        roots (concat ["src"] (project/test-directories))]
-    (apply max source-mtime (map #(newest-file-mtime (File. %)) roots))))
+  "Return newest mtime across the source file, src/, and the effective test roots."
+  ([source-path]
+   (newest-input-mtime source-path nil))
+  ([source-path test-roots]
+   (let [source-file (File. source-path)
+         source-mtime (if (.exists source-file) (.lastModified source-file) 0)
+         roots (concat ["src"] (if (seq test-roots)
+                                 test-roots
+                                 (project/test-directories)))]
+     (apply max source-mtime (map #(newest-file-mtime (File. %)) roots)))))
 
 (defn- stale-reason
   "Return nil when fresh, otherwise one of :missing or :stale."
-  [^File lcov-file source-path]
-  (cond
-    (not (.exists lcov-file)) :missing
-    (< (.lastModified lcov-file) (newest-input-mtime source-path)) :stale
-    :else nil))
+  ([^File lcov-file source-path]
+   (stale-reason lcov-file source-path nil))
+  ([^File lcov-file source-path test-roots]
+   (cond
+     (not (.exists lcov-file)) :missing
+     (< (.lastModified lcov-file) (newest-input-mtime source-path test-roots)) :stale
+     :else nil)))
 
 (defn- read-provenance
   []
@@ -93,7 +111,7 @@
   ([source-path] (coverage-status source-path {}))
   ([source-path {:keys [coverage-command test-command test-roots]}]
   (let [lcov-file (File. (lcov-path))
-        reason (stale-reason lcov-file source-path)
+        reason (stale-reason lcov-file source-path test-roots)
         expected (when test-command
                    (expected-provenance coverage-command test-command test-roots))
         recorded (read-provenance)]
@@ -101,7 +119,8 @@
      :exists? (.exists lcov-file)
      :last-modified (when (.exists lcov-file) (.lastModified lcov-file))
      :source-newer? (when (.exists lcov-file)
-                      (> (newest-input-mtime source-path) (.lastModified lcov-file)))
+                      (> (newest-input-mtime source-path test-roots)
+                         (.lastModified lcov-file)))
      :stale-reason reason
      :profile-match? (when expected (= expected recorded))
      :recorded-provenance recorded
@@ -185,20 +204,35 @@
       (finally
         (remove-backup! backup)))))
 
+(defn- attach-coverage-result
+  [status result]
+  (let [normalized (normalize-coverage-result result)]
+    (assoc status
+           :coverage-command-result (select-keys normalized [:exit :out :err :ok?])
+           :coverage-exit-nonzero? (not (:ok? normalized)))))
+
 (defn- regenerate-coverage
   [source-path lcov-file coverage-command expected initial options]
-  (let [backup (move-aside! lcov-file "lcov")]
+  (let [backup (move-aside! lcov-file "lcov")
+        test-roots (:test-roots options)]
     (try
-      (if (and (run-coverage! coverage-command)
-               (.exists lcov-file)
-               (nil? (stale-reason lcov-file source-path)))
-        (let [lines (covered-lines-from-lcov lcov-file source-path)]
-          (let [refreshed (commit-provenance! source-path options expected)]
-            (remove-backup! backup)
-            (assoc refreshed :lines lines :status :regenerated)))
-        (do
-          (rollback-file! lcov-file backup)
-          (regeneration-failure initial backup)))
+      (let [result (normalize-coverage-result (run-coverage! coverage-command))]
+        (try
+          (let [wrote? (.exists lcov-file)
+                fresh? (and wrote? (nil? (stale-reason lcov-file source-path test-roots)))]
+            (if (and wrote? fresh?)
+              (let [lines (covered-lines-from-lcov lcov-file source-path)
+                    refreshed (commit-provenance! source-path options expected)]
+                (remove-backup! backup)
+                (attach-coverage-result
+                  (assoc refreshed :lines lines :status :regenerated)
+                  result))
+              (do
+                (rollback-file! lcov-file backup)
+                (attach-coverage-result (regeneration-failure initial backup) result))))
+          (catch Exception _
+            (rollback-file! lcov-file backup)
+            (attach-coverage-result (regeneration-failure initial backup) result))))
       (catch Exception _
         (rollback-file! lcov-file backup)
         (regeneration-failure initial backup))

@@ -440,7 +440,35 @@
       (should-not (workflow/write-manifest? #{2} [{:index 0}] killed []))
       (should-not (workflow/write-manifest? nil [] killed []))
       (should-not (workflow/write-manifest? nil [{:index 0}] survived []))
-      (should-not (workflow/write-manifest? nil [{:index 0}] killed [{:line 9}])))))
+      (should-not (workflow/write-manifest? nil [{:index 0}] killed [{:line 9}]))
+      (should-not (workflow/write-manifest?
+                    nil nil false [{:index 0}] killed []
+                    "clojure -M:unit -n stella.integration-method-test"))
+      (should (workflow/write-manifest?
+                nil nil false [{:index 0}] killed []
+                "clojure -M:unit"))))
+
+  (it "does not stamp a verified manifest for a namespace-scoped test command"
+    (let [temp-file (java.io.File/createTempFile "mutant-scoped" ".cljc")
+          temp-path (.getPath temp-file)
+          original "(ns test-ns)\n(defn foo [] (+ 1 2))\n"
+          test-command "clojure -M:unit -n test-ns"]
+      (spit temp-path original)
+      (try
+        (with-redefs [runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
+                      coverage/load-coverage
+                      (fn [& _] {:lines #{1 2} :status :fresh})
+                      execution/run-mutations-parallel
+                      (fn [sites _ _ _ _ _ & _]
+                        (mapv (fn [site] {:site site :result :killed :timeout? false})
+                              sites))]
+          (let [output (with-out-str
+                         (workflow/run-mutation-testing
+                           temp-path nil 10 test-command nil false true 100
+                           false nil false ["spec"]))]
+            (should-contain "Not writing a verified manifest" output)
+            (should-be-nil (manifest/extract-embedded-manifest (slurp temp-path)))))
+        (finally (.delete temp-file))))))
 
 (describe "run-mutation-testing first run reporting"
   (it "prints uncovered sites when no footer exists"

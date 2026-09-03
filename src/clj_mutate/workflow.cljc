@@ -173,12 +173,16 @@
 
 (defn write-manifest?
   "True only after an unfiltered-by-site run killed every in-scope covered
-   mutation and left no in-scope uncovered mutations."
+   mutation and left no in-scope uncovered mutations. Namespace-scoped test
+   commands (-n/--namespace) cannot mint a verified stamp."
   ([lines sites results uncovered]
-   (write-manifest? lines nil false sites results uncovered))
+   (write-manifest? lines nil false sites results uncovered nil))
   ([lines mutation _since-last-run sites results uncovered]
+   (write-manifest? lines mutation _since-last-run sites results uncovered nil))
+  ([lines mutation _since-last-run sites results uncovered test-command]
    (and (nil? lines)
         (nil? mutation)
+        (not (project/namespace-scoped-test-command? test-command))
         (seq sites)
         (every? #(= :killed (:result %)) results)
         (empty? uncovered))))
@@ -292,9 +296,18 @@
                        status (result-status results in-scope-uncovered)
                        summary (report/summarize-results
                                  results lines effective-since-last-run in-scope-uncovered)]
-                   (when (write-manifest? lines mutation effective-since-last-run
-                                          sites results in-scope-uncovered)
-                     (spit source-path manifest-content))
+                   (cond
+                     (write-manifest? lines mutation effective-since-last-run
+                                      sites results in-scope-uncovered test-command)
+                     (spit source-path manifest-content)
+
+                     (and (nil? lines)
+                          (nil? mutation)
+                          (project/namespace-scoped-test-command? test-command)
+                          (seq sites)
+                          (every? #(= :killed (:result %)) results)
+                          (empty? in-scope-uncovered))
+                     (report/print-verified-manifest-skipped))
                    (merge summary {:status status}))
                  (finally
                    (backup/cleanup-backup! source-path)))))))))))

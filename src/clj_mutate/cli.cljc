@@ -37,7 +37,9 @@
     "  A custom --test-command requires --coverage-command or --no-coverage.\n"
     "  Test and coverage commands must select the same roots. If they cannot be inferred\n"
     "  from the selected deps.edn alias or bb.edn task, provide --test-roots.\n"
-    "  Runs narrowed by --lines or --mutation do not update the verified manifest.\n"))
+    "  Runs narrowed by --lines, --mutation, or a -n/--namespace test command do not\n"
+    "  update the verified manifest. --scan and --update-manifest skip test/coverage\n"
+    "  profile checks because they do not run tests or coverage.\n"))
 
 (def default-options
   {:source-path nil
@@ -276,14 +278,20 @@
            options (initial-options)]
       (if (nil? arg)
         (let [checked (ensure-source-path options)
+              skip-profile? (or (:error checked)
+                                (:scan checked)
+                                (:update-manifest checked))
               custom-test? (contains? (:explicit-options checked) :test-command)
-              roots (when-not (:error checked)
+              roots (when-not skip-profile?
                       (project/test-profile-roots
                         (System/getProperty "user.dir")
                         (:test-command checked)
                         (:test-roots checked)))]
           (cond
             (:error checked)
+            checked
+
+            skip-profile?
             checked
 
             (and custom-test?
