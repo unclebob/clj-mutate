@@ -57,7 +57,8 @@
                    worker-dirs)]
      (try
        (run! deref futures)
-       (vec (sort-by #(:index (:site %)) @results))
+       (vec (sort-by #(or (:run-index (:site %))
+                          (:index (:site %))) @results))
        (finally
          (workers/cleanup-worker-dirs! run-base-dir))))))
 

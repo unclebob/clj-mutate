@@ -1,6 +1,11 @@
 (ns clj-mutate.manifest
-  (:require [clojure.edn :as edn]
+  (:require [clj-mutate.digest :as digest]
+            [clj-mutate.syntax :as syntax]
+            [clojure.edn :as edn]
             [clojure.string :as str]))
+
+(def current-version 2)
+(def hash-algorithm :sha256-source-v1)
 
 (def mutation-comment-re #"^;; mutation-tested: (\d{4}-\d{2}-\d{2})")
 (def manifest-start-line ";; clj-mutate-manifest-begin")
@@ -48,41 +53,46 @@
       strip-embedded-manifest
       (str/replace #"(?m)^;; mutation-tested: \d{4}-\d{2}-\d{2}\n?" "")))
 
-(defn- form-kind
-  [form]
-  (when (seq? form)
-    (first form)))
-
-(defn- top-level-form-id
-  [idx form]
-  (let [head (form-kind form)]
-    (cond
-      (and (#{'def 'defn 'defn- 'defmacro 'defmulti} head)
-           (symbol? (second form)))
-      (str head "/" (second form))
-
-      (and (= 'defmethod head)
-           (symbol? (second form)))
-      (str head "/" (second form) "/" (pr-str (nth form 2 nil)))
-
-      :else
-      (str "form/" idx "/" (or head :literal)))))
+(defn- as-source
+  [source-or-forms]
+  (if (string? source-or-forms)
+    (syntax/normalize-newlines source-or-forms)
+    (str/join "\n" (map pr-str source-or-forms))))
 
 (defn top-level-form-manifest
-  [forms]
-  (mapv
-    (fn [idx form]
-      {:id (top-level-form-id idx form)
-       :kind (str (or (form-kind form) :literal))
-       :line (-> form meta :line)
-       :end-line (-> form meta :end-line)
-       :hash (str (hash (pr-str form)))})
-    (range)
-    forms))
+  [source-or-forms]
+  (let [root (syntax/of-source (as-source source-or-forms))]
+    (mapv
+      (fn [idx zloc]
+        (let [form (syntax/sexpr zloc)]
+          {:id (syntax/top-level-form-id idx form)
+           :kind (str (or (syntax/form-kind form) :literal))
+           :line (:line (syntax/position zloc))
+           :end-line (syntax/end-line zloc)
+           :hash (digest/sha-256 (syntax/source zloc))}))
+      (range)
+      (syntax/top-level-locations root))))
 
 (defn module-hash
-  [forms]
-  (str (hash (pr-str forms))))
+  [source-or-forms]
+  (->> (top-level-form-manifest source-or-forms)
+       (map :hash)
+       (str/join "\u0000")
+       digest/sha-256))
+
+(defn current-manifest?
+  [manifest]
+  (and (= current-version (:version manifest))
+       (= hash-algorithm (:hash-algorithm manifest))))
+
+(defn trusted-manifest?
+  [manifest provenance]
+  (and (current-manifest? manifest)
+       (true? (:verified? manifest))
+       (string? (:tested-at manifest))
+       (string? (:module-hash manifest))
+       (vector? (:forms manifest))
+       (= provenance (:provenance manifest))))
 
 (defn changed-form-indices
   [forms manifest]
@@ -114,11 +124,17 @@
      :changed-form-indices (into new-form-indices manifest-violating-form-indices)}))
 
 (defn build-embedded-manifest
-  [forms date-str]
-  {:version 1
-   :tested-at date-str
-   :module-hash (module-hash forms)
-   :forms (top-level-form-manifest forms)})
+  ([source-or-forms date-str]
+   (build-embedded-manifest source-or-forms date-str {}))
+  ([source-or-forms date-str {:keys [verified? provenance]
+                              :or {verified? true provenance {}}}]
+   {:version current-version
+    :hash-algorithm hash-algorithm
+    :verified? verified?
+    :tested-at date-str
+    :module-hash (module-hash source-or-forms)
+    :provenance provenance
+    :forms (top-level-form-manifest source-or-forms)}))
 
 (defn embed-mutation-manifest
   [content manifest]

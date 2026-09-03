@@ -54,8 +54,8 @@
 
 (describe "top-level form manifest"
   (it "tracks top-level forms with ids, spans, and hashes"
-    (let [forms (source/read-source-forms "(ns foo)\n(defn bar [] 42)\n(defmethod quux :x [] true)\n")
-          form-manifest (manifest/top-level-form-manifest forms)]
+    (let [source "(ns foo)\n(defn bar [] 42)\n(defmethod quux :x [] true)\n"
+          form-manifest (manifest/top-level-form-manifest source)]
       (should= "form/0/ns" (:id (first form-manifest)))
       (should= "defn/bar" (:id (second form-manifest)))
       (should= "defmethod/quux/:x" (:id (nth form-manifest 2)))
@@ -63,17 +63,31 @@
       (should (contains? (second form-manifest) :end-line))
       (should (let [end-line (:end-line (second form-manifest))]
                 (or (nil? end-line) (pos-int? end-line))))
-      (should-not-be-nil (:hash (second form-manifest)))))
+      (should (re-matches #"[0-9a-f]{64}" (:hash (second form-manifest))))))
 
-  (it "computes a semantic module hash from parsed forms"
-    (let [a (source/read-source-forms "(ns foo)\n(defn bar [] 42)\n")
-          b (source/read-source-forms "(ns foo)\n(defn bar [] 42)\n")
-          c (source/read-source-forms "(ns foo)\n(defn bar [] 43)\n")]
+  (it "computes a stable SHA-256 module hash from source slices"
+    (let [a "(ns foo)\n(defn bar [] #(inc %))\n"
+          b "(ns foo)\r\n(defn bar [] #(inc %))\r\n"
+          c "(ns foo)\n(defn bar [] #(dec %))\n"]
       (should= (manifest/module-hash a) (manifest/module-hash b))
-      (should-not= (manifest/module-hash a) (manifest/module-hash c))))
+      (should-not= (manifest/module-hash a) (manifest/module-hash c))
+      (should (re-matches #"[0-9a-f]{64}" (manifest/module-hash a)))))
+
+  (it "marks version-2 verified manifests with matching provenance as trusted"
+    (let [provenance {:mutation-rules-version "2" :test-profile "abc"}
+          current (manifest/build-embedded-manifest
+                    "(ns foo)\n" "2026-09-03T10:00:00-05:00"
+                    {:verified? true :provenance provenance})
+          unverified (assoc current :verified? false)
+          version-one {:version 1 :module-hash "old"}]
+      (should (manifest/current-manifest? current))
+      (should (manifest/trusted-manifest? current provenance))
+      (should-not (manifest/trusted-manifest? current {:test-profile "changed"}))
+      (should-not (manifest/trusted-manifest? unverified provenance))
+      (should-not (manifest/current-manifest? version-one))))
 
   (it "finds changed top-level form indices from a prior manifest"
-    (let [forms (source/read-source-forms "(ns foo)\n(defn unchanged [] 1)\n(defn changed [] 3)\n")
+    (let [forms "(ns foo)\n(defn unchanged [] 1)\n(defn changed [] 3)\n"
           prior {:version 1
                  :tested-at "2026-02-22T10:15:30-06:00"
                  :module-hash "old-module"

@@ -69,9 +69,10 @@
                   :manifest-exists? true
                   :module-hash-changed? false
                   :reuse-lcov true
-                  :coverage-status {:lcov-path "target/coverage/lcov.info"
-                                    :exists? false
-                                    :last-modified nil
+                  :coverage-status {:status :fresh-reused
+                                    :lcov-path "target/coverage/lcov.info"
+                                    :exists? true
+                                    :last-modified 0
                                     :source-newer? false}
                   :surface-area-counts {:new-form-mutations 0
                                         :manifest-violating-form-mutations 0}}
@@ -87,10 +88,8 @@
                      []
                      50))]
       (should-contain "Previous mutation test: 2026-01-01T00:00:00Z" output)
-      (should-contain "Reusing existing LCOV data from target/coverage/lcov.info." output)
-      (should-contain "LCOV exists: no" output)
-      (should-contain "Target source newer than LCOV: no" output)
-      (should-not-contain "LCOV last modified:" output))))
+      (should-contain "Reusing fresh LCOV from target/coverage/lcov.info" output)
+      (should-not-contain "stale" output))))
 
 (describe "print-uncovered"
   (it "prints coverage gaps when uncovered mutations exist"
@@ -98,8 +97,8 @@
                    (report/print-uncovered [{:line 12 :description "if -> if-not"}
                                             {:line 15 :description "0 -> 1"}]))]
       (should-contain "=== Coverage Gaps (2 mutations on uncovered lines) ===" output)
-      (should-contain "line 12: if -> if-not" output)
-      (should-contain "line 15: 0 -> 1" output))))
+      (should-contain "12:0  if -> if-not" output)
+      (should-contain "15:0  0 -> 1" output))))
 
 (describe "format-report"
   (it "produces summary with kill count"
@@ -114,13 +113,13 @@
     (let [results [{:site {:description "+ -> -" :line 42} :result :killed}
                    {:site {:description "1 -> 0" :line 99 :index 1} :result :survived}]
           formatted (report/format-report "src/empire/foo.cljc" results 0)]
-      (should-contain "L42" formatted)
-      (should-contain "L99" formatted)))
+      (should-contain "42:0" formatted)
+      (should-contain "99:0" formatted)))
 
   (it "includes line numbers in survivor summary"
     (let [results [{:site {:description "1 -> 0" :line 207 :index 0} :result :survived}]
           formatted (report/format-report "src/empire/foo.cljc" results 0)]
-      (should-contain "L207" formatted)))
+      (should-contain "207:0" formatted)))
 
   (it "includes uncovered count in summary"
     (let [results [{:site {:description "+ -> -"} :result :killed}]

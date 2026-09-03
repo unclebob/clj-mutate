@@ -1,9 +1,10 @@
 {:paths ["src" "spec" "spec-bb"]
  :deps {org.clojure/tools.reader {:mvn/version "1.4.2"}
+        rewrite-clj/rewrite-clj {:mvn/version "1.2.55"}
         speclj/speclj {:mvn/version "3.12.2"}}
  :tasks {spec {:doc "Run specs"
                :requires ([speclj.main :as speclj])
-               :task (apply speclj/-main "-c" *command-line-args*)}
+               :task (apply speclj/-main "-c" "spec" "spec-bb" *command-line-args*)}
          mutate {:doc "Run clj-mutate"
                  :requires ([clj-mutate.core :as core])
                  :task (apply core/-main *command-line-args*)}

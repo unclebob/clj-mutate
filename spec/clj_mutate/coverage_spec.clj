@@ -1,205 +1,212 @@
 (ns clj-mutate.coverage-spec
   (:require [speclj.core :refer :all]
-            [clj-mutate.coverage :as cov]))
+            [clj-mutate.coverage :as cov]
+            [clj-mutate.project :as project]))
 
 (def sample-lcov
   (str "SF:src/empire/combat.cljc\n"
-       "DA:1,5\n"
-       "DA:2,0\n"
-       "DA:3,3\n"
-       "DA:5,1\n"
-       "end_of_record\n"
-       "SF:src/empire/game_loop.cljc\n"
-       "DA:10,0\n"
-       "DA:11,2\n"
-       "end_of_record\n"))
+       "DA:1,5\nDA:2,0\nDA:3,3\nDA:5,1\nend_of_record\n"))
 
-(describe "lcov-path"
-  (it "returns the expected path"
-    (should= "target/coverage/lcov.info" (cov/lcov-path))))
+(defn temp-path [prefix suffix]
+  (str "/tmp/" prefix "-" (System/nanoTime) suffix))
+
+(defn delete-if-present! [path]
+  (java.nio.file.Files/deleteIfExists (.toPath (java.io.File. path))))
+
+(describe "lcov paths"
+  (it "uses a coverage file and adjacent provenance file"
+    (should= "target/coverage/lcov.info" (cov/lcov-path))
+    (should= "target/coverage/clj-mutate.edn" (cov/provenance-path))))
 
 (describe "run-coverage!"
-  (it "runs clj -M:cov --lcov and returns true on success"
+  (it "runs the configured command and returns true on success"
     (let [calls (atom nil)]
       (with-redefs [clojure.java.shell/sh (fn [& args]
                                             (reset! calls args)
-                                            {:exit 0 :out "" :err ""})]
-        (should (cov/run-coverage!))
-        (should= ["clj" "-M:cov" "--lcov"] @calls))))
+                                            {:exit 0})]
+        (should (cov/run-coverage! "clj -M:mutation-cov"))
+        (should= ["clj" "-M:mutation-cov"] @calls))))
 
   (it "returns false on failure"
-    (with-redefs [clojure.java.shell/sh (fn [& _] {:exit 1 :out "" :err ""})]
-      (should-not (cov/run-coverage!)))))
+    (with-redefs [clojure.java.shell/sh (fn [& _] {:exit 1})]
+      (should-not (cov/run-coverage! "clj -M:cov")))))
 
-(describe "load-coverage"
-  (it "runs coverage when lcov.info is missing"
-    (let [ran? (atom false)
-          temp-lcov (str "/tmp/test-lcov-" (System/nanoTime) ".info")]
-      (with-redefs [cov/run-coverage! (fn [] (reset! ran? true)
-                                        (spit temp-lcov sample-lcov)
-                                        true)
-                    cov/lcov-path (constantly temp-lcov)
-                    clj-mutate.project/running-on-babashka? (constantly false)]
-        (java.nio.file.Files/deleteIfExists
-          (.toPath (java.io.File. temp-lcov)))
+(describe "load-coverage structured results"
+  (it "generates missing coverage and records its profile"
+    (let [lcov (temp-path "clj-mutate-lcov" ".info")
+          provenance (temp-path "clj-mutate-profile" ".edn")
+          ran (atom nil)]
+      (try
+        (with-redefs [cov/lcov-path (constantly lcov)
+                      cov/provenance-path (constantly provenance)
+                      cov/run-coverage! (fn [command]
+                                          (reset! ran command)
+                                          (spit lcov sample-lcov)
+                                          true)]
+          (let [result (cov/load-coverage
+                         "src/empire/combat.cljc"
+                         {:test-command "clj -M:mutation-spec"
+                          :coverage-command "clj -M:mutation-cov"})]
+            (should= "clj -M:mutation-cov" @ran)
+            (should= :regenerated (:status result))
+            (should= #{1 3 5} (:lines result))
+            (should (.exists (java.io.File. provenance)))))
+        (finally
+          (delete-if-present! lcov)
+          (delete-if-present! provenance)))))
+
+  (it "reuses stale coverage only when provenance matches"
+    (let [lcov (temp-path "clj-mutate-stale" ".info")
+          command "clj -M:mutation-spec"
+          coverage-command "clj -M:mutation-cov"
+          expected (#'cov/expected-provenance coverage-command command)]
+      (spit lcov sample-lcov)
+      (try
+        (with-redefs [cov/lcov-path (constantly lcov)
+                      cov/stale-reason (fn [_ _] :stale)
+                      cov/read-provenance (constantly expected)
+                      cov/run-coverage! (fn [_] (throw (Exception. "should not run")))]
+          (let [result (cov/load-coverage
+                         "src/empire/combat.cljc"
+                         {:reuse-lcov true
+                          :test-command command
+                          :coverage-command coverage-command})]
+            (should= :stale-reused (:status result))
+            (should= #{1 3 5} (:lines result))))
+        (finally (delete-if-present! lcov)))))
+
+  (it "rejects reuse when the coverage profile is unknown"
+    (let [lcov (temp-path "clj-mutate-unknown-profile" ".info")]
+      (spit lcov sample-lcov)
+      (try
+        (with-redefs [cov/lcov-path (constantly lcov)
+                      cov/read-provenance (constantly nil)]
+          (try
+            (cov/load-coverage "src/empire/combat.cljc" {:reuse-lcov true})
+            (should false)
+            (catch clojure.lang.ExceptionInfo ex
+              (should= :coverage-profile-mismatch (:reason (ex-data ex))))))
+        (finally (delete-if-present! lcov)))))
+
+  (it "rejects reuse when LCOV is missing"
+    (let [lcov (temp-path "clj-mutate-missing" ".info")]
+      (delete-if-present! lcov)
+      (with-redefs [cov/lcov-path (constantly lcov)]
+        (try
+          (cov/load-coverage "src/empire/combat.cljc" {:reuse-lcov true})
+          (should false)
+          (catch clojure.lang.ExceptionInfo ex
+            (should= :missing-lcov-for-reuse (:reason (ex-data ex))))))))
+
+  (it "disables filtering when no coverage command is available"
+    (let [lcov (temp-path "clj-mutate-no-coverage" ".info")]
+      (with-redefs [cov/lcov-path (constantly lcov)
+                    project/default-coverage-command (constantly nil)
+                    project/default-test-command (constantly "bb spec")]
         (let [result (cov/load-coverage "src/empire/combat.cljc")]
-          (should @ran?)
-          (should= #{1 3 5} result)))))
+          (should= :coverage-disabled (:status result))
+          (should-be-nil (:lines result))))))
 
-  (it "reuses stale lcov when requested"
-    (let [ran? (atom false)
-          temp-lcov (str "/tmp/test-lcov-stale-" (System/nanoTime) ".info")]
-      (spit temp-lcov sample-lcov)
-      (with-redefs [cov/run-coverage! (fn [] (reset! ran? true) true)
-                    cov/lcov-path (constantly temp-lcov)
-                    cov/stale-reason (fn [_ _] :stale)
-                    clj-mutate.project/running-on-babashka? (constantly false)]
-        (let [result (cov/load-coverage "src/empire/combat.cljc" {:reuse-lcov true})]
-          (should= false @ran?)
-          (should= #{1 3 5} result)))
-      (java.nio.file.Files/deleteIfExists
-        (.toPath (java.io.File. temp-lcov)))))
+  (it "does not trust an existing LCOV file with unknown provenance"
+    (let [lcov (temp-path "clj-mutate-bb-existing" ".info")]
+      (spit lcov sample-lcov)
+      (try
+        (with-redefs [cov/lcov-path (constantly lcov)
+                      cov/read-provenance (constantly nil)
+                      project/default-coverage-command (constantly nil)
+                      project/default-test-command (constantly "bb spec")]
+          (let [result (cov/load-coverage "src/empire/combat.cljc")]
+            (should= :coverage-disabled (:status result))
+            (should-be-nil (:lines result))))
+        (finally (delete-if-present! lcov)))))
 
-  (it "fails clearly when reuse-lcov is requested and lcov is missing"
-    (let [temp-lcov (str "/tmp/missing-reuse-lcov-" (System/nanoTime) ".info")]
-      (with-redefs [cov/run-coverage! (fn [] (throw (Exception. "should not run")))
-                    cov/lcov-path (constantly temp-lcov)
-                    cov/stale-reason (fn [_ _] :missing)
-                    clj-mutate.project/running-on-babashka? (constantly false)]
-        (should-throw clojure.lang.ExceptionInfo
-                      (cov/load-coverage "src/empire/combat.cljc" {:reuse-lcov true})))))
+  (it "regenerates stale coverage when reuse is not requested"
+    (let [lcov (temp-path "clj-mutate-refresh" ".info")
+          provenance (temp-path "clj-mutate-refresh" ".edn")
+          ran? (atom false)
+          freshness-checks (atom 0)]
+      (spit lcov sample-lcov)
+      (try
+        (with-redefs [cov/lcov-path (constantly lcov)
+                      cov/provenance-path (constantly provenance)
+                      cov/stale-reason (fn [_ _]
+                                         (when (= 1 (swap! freshness-checks inc))
+                                           :stale))
+                      cov/run-coverage! (fn [_] (reset! ran? true) true)]
+          (let [result (cov/load-coverage
+                         "src/empire/combat.cljc"
+                         {:coverage-command "clj -M:cov"})]
+            (should @ran?)
+            (should= :regenerated (:status result))
+            (should= #{1 3 5} (:lines result))))
+        (finally
+          (delete-if-present! lcov)
+          (delete-if-present! provenance)))))
 
-  (it "fails clearly when reuse-lcov is requested and lcov is missing on Babashka"
-    (let [temp-lcov (str "/tmp/missing-reuse-lcov-bb-" (System/nanoTime) ".info")]
-      (with-redefs [cov/run-coverage! (fn [] (throw (Exception. "should not run")))
-                    cov/lcov-path (constantly temp-lcov)
-                    cov/stale-reason (fn [_ _] :missing)
-                    clj-mutate.project/running-on-babashka? (constantly true)]
-        (should-throw clojure.lang.ExceptionInfo
-                      (cov/load-coverage "src/empire/combat.cljc" {:reuse-lcov true})))))
+  (it "reports refresh failure without printing or trusting stale coverage"
+    (let [lcov (temp-path "clj-mutate-refresh-fail" ".info")]
+      (spit lcov sample-lcov)
+      (try
+        (with-redefs [cov/lcov-path (constantly lcov)
+                      cov/stale-reason (fn [_ _] :stale)
+                      cov/run-coverage! (fn [_] false)]
+          (let [result (atom nil)
+                output (with-out-str
+                         (reset! result
+                                 (cov/load-coverage
+                                   "src/empire/combat.cljc"
+                                   {:coverage-command "clj -M:cov"})))]
+            (should= "" output)
+            (should= :refresh-failed (:status @result))))
+        (finally (delete-if-present! lcov))))))
 
-  (it "returns nil when lcov.info does not exist and coverage fails"
-    (let [temp-lcov (str "/tmp/nonexistent-lcov-" (System/nanoTime) ".info")]
-      (with-redefs [cov/run-coverage! (fn [] false)
-                    cov/lcov-path (constantly temp-lcov)]
-        (java.nio.file.Files/deleteIfExists
-          (.toPath (java.io.File. temp-lcov)))
-        (should-be-nil (cov/load-coverage "src/empire/combat.cljc")))))
-
-  (it "does not auto-run coverage for babashka projects"
-    (let [ran? (atom false)
-          temp-lcov (str "/tmp/test-lcov-bb-" (System/nanoTime) ".info")]
-      (with-redefs [cov/run-coverage! (fn [] (reset! ran? true) true)
-                    cov/lcov-path (constantly temp-lcov)
-                    clj-mutate.project/running-on-babashka? (constantly true)]
-        (java.nio.file.Files/deleteIfExists
-          (.toPath (java.io.File. temp-lcov)))
-        (should-be-nil (cov/load-coverage "src/empire/combat.cljc"))
-        (should= false @ran?))))
-
-  (it "reads existing lcov for babashka projects without regenerating"
-    (let [ran? (atom false)
-          temp-lcov (str "/tmp/test-lcov-bb-exists-" (System/nanoTime) ".info")]
-      (spit temp-lcov sample-lcov)
-      (with-redefs [cov/run-coverage! (fn [] (reset! ran? true) true)
-                    cov/lcov-path (constantly temp-lcov)
-                    clj-mutate.project/running-on-babashka? (constantly true)]
-        (should= #{1 3 5} (cov/load-coverage "src/empire/combat.cljc"))
-        (should= false @ran?))
-      (java.nio.file.Files/deleteIfExists
-        (.toPath (java.io.File. temp-lcov)))))
-
-  (it "regenerates stale lcov when reuse is not requested"
-    (let [ran? (atom false)
-          temp-lcov (str "/tmp/test-lcov-stale-refresh-" (System/nanoTime) ".info")]
-      (spit temp-lcov sample-lcov)
-      (with-redefs [cov/run-coverage! (fn [] (reset! ran? true) true)
-                    cov/lcov-path (constantly temp-lcov)
-                    cov/stale-reason (fn [_ _] :stale)
-                    clj-mutate.project/running-on-babashka? (constantly false)]
-        (let [output (with-out-str
-                       (should= #{1 3 5} (cov/load-coverage "src/empire/combat.cljc")))]
-          (should @ran?)
-          (should-contain "Coverage file is stale; regenerating LCOV with clj -M:cov --lcov." output)))
-      (java.nio.file.Files/deleteIfExists
-        (.toPath (java.io.File. temp-lcov)))))
-
-  (it "continues with existing coverage when refresh fails"
-    (let [temp-lcov (str "/tmp/test-lcov-refresh-fail-" (System/nanoTime) ".info")]
-      (spit temp-lcov sample-lcov)
-      (with-redefs [cov/run-coverage! (fn [] false)
-                    cov/lcov-path (constantly temp-lcov)
-                    cov/stale-reason (fn [_ _] :stale)
-                    clj-mutate.project/running-on-babashka? (constantly false)]
-        (let [output (with-out-str
-                       (should= #{1 3 5} (cov/load-coverage "src/empire/combat.cljc")))]
-          (should-contain "Coverage refresh failed; continuing with existing coverage if available." output)))
-      (java.nio.file.Files/deleteIfExists
-        (.toPath (java.io.File. temp-lcov))))))
+  (it "does not report regeneration when a successful command creates no LCOV file"
+    (let [lcov (temp-path "clj-mutate-no-output" ".info")]
+      (delete-if-present! lcov)
+      (with-redefs [cov/lcov-path (constantly lcov)
+                    cov/run-coverage! (fn [_] true)]
+        (let [result (cov/load-coverage
+                       "src/empire/combat.cljc"
+                       {:coverage-command "true"})]
+          (should= :missing (:status result))
+          (should-be-nil (:lines result))))))
 
 (describe "coverage-status"
-  (it "reports lcov presence and freshness diagnostics"
+  (it "reports presence, freshness, and provenance matching"
     (let [temp (java.io.File/createTempFile "lcov-status" ".info")]
       (.setLastModified temp 123)
       (with-redefs [cov/lcov-path (constantly (.getPath temp))
-                    cov/newest-input-mtime (fn [_] 200)]
-        (let [status (cov/coverage-status "src/empire/combat.cljc")]
+                    cov/newest-input-mtime (fn [_] 200)
+                    cov/read-provenance (constantly {:profile :old})]
+        (let [status (cov/coverage-status
+                       "src/empire/combat.cljc"
+                       {:coverage-command "cov" :test-command "spec"})]
           (should= true (:exists? status))
           (should= 123 (:last-modified status))
-          (should= true (:source-newer? status))
-          (should= :stale (:stale-reason status))))
+          (should= :stale (:stale-reason status))
+          (should= false (:profile-match? status))))
       (.delete temp))))
 
-(describe "stale-reason"
-  (it "reports missing, stale, and fresh lcov states"
-    (let [missing (java.io.File. (str "/tmp/missing-lcov-" (System/nanoTime) ".info"))]
-      (java.nio.file.Files/deleteIfExists (.toPath missing))
+(describe "freshness helpers"
+  (it "reports missing, stale, and fresh LCOV states"
+    (let [missing (java.io.File. (temp-path "missing-lcov" ".info"))]
       (should= :missing (#'cov/stale-reason missing "src/empire/combat.cljc")))
-    (doseq [[input-mtime file-mtime expected]
-            [[200 100 :stale]
-             [100 200 nil]]]
-      (let [temp (java.io.File/createTempFile "lcov" ".info")]
-        (try
-          (with-redefs [cov/newest-input-mtime (fn [_] input-mtime)]
-            (.setLastModified temp file-mtime)
-            (if expected
-              (should= expected (#'cov/stale-reason temp "src/empire/combat.cljc"))
-              (should-be-nil (#'cov/stale-reason temp "src/empire/combat.cljc"))))
-          (finally
-            (.delete temp)))))))
+    (let [temp (java.io.File/createTempFile "lcov" ".info")]
+      (try
+        (with-redefs [cov/newest-input-mtime (fn [_] 200)]
+          (.setLastModified temp 100)
+          (should= :stale (#'cov/stale-reason temp "src/x.cljc")))
+        (with-redefs [cov/newest-input-mtime (fn [_] 100)]
+          (.setLastModified temp 200)
+          (should-be-nil (#'cov/stale-reason temp "src/x.cljc")))
+        (finally (.delete temp)))))
 
-(describe "newest-file-mtime"
-  (it "returns 0 for a missing directory"
-    (let [missing (java.io.File. (str "/tmp/no-such-dir-" (System/nanoTime)))]
-      (should= 0 (#'cov/newest-file-mtime missing))))
-
-  (it "returns the newest mtime among regular files in a directory tree"
-    (let [root (doto (java.io.File. (str "/tmp/mtime-dir-" (System/nanoTime))) (.mkdirs))
-          nested (doto (java.io.File. root "nested") (.mkdirs))
-          a (doto (java.io.File. root "a.txt") (spit "a"))
-          b (doto (java.io.File. nested "b.txt") (spit "b"))]
-      (.setLastModified a 100)
-      (.setLastModified b 200)
+  (it "finds the newest file in a directory tree"
+    (let [root (doto (java.io.File. (temp-path "mtime-dir" "")) (.mkdirs))
+          a (doto (java.io.File. root "a.txt") (spit "a"))]
+      (.setLastModified a 200)
       (should= 200 (#'cov/newest-file-mtime root))
-      (.delete b)
-      (.delete nested)
       (.delete a)
       (.delete root))))
-
-(describe "newest-input-mtime"
-  (it "uses 0 for a missing source file"
-    (with-redefs [cov/newest-file-mtime (fn [_] 50)]
-      (should= 50 (#'cov/newest-input-mtime (str "/tmp/missing-src-" (System/nanoTime) ".cljc")))))
-
-  (it "returns the max mtime across source, src, and spec"
-    (let [temp (java.io.File/createTempFile "coverage-src" ".cljc")]
-      (.setLastModified temp 120)
-      (with-redefs [cov/newest-file-mtime (fn [dir]
-                                            (case (.getPath dir)
-                                              "src" 130
-                                              "spec" 140
-                                              0))]
-        (should= 140 (#'cov/newest-input-mtime (.getPath temp))))
-      (.delete temp))))
 
 (run-specs)

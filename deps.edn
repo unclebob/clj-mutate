@@ -1,12 +1,13 @@
 {:paths ["src"]
  :deps {org.clojure/clojure {:mvn/version "1.12.0"}
+        rewrite-clj/rewrite-clj {:mvn/version "1.2.55"}
         org.clojure/tools.reader {:mvn/version "1.4.2"}}
- :aliases {:spec {:main-opts ["-m" "speclj.main" "-c"]
+ :aliases {:spec {:main-opts ["-m" "speclj.main" "-c" "spec" "spec-jvm"]
                   :extra-deps {speclj/speclj {:mvn/version "3.12.2"}}
-                  :extra-paths ["spec"]}
+                  :extra-paths ["spec" "spec-jvm"]}
            :mutate {:main-opts ["-m" "clj-mutate.core"]
                     :extra-deps {speclj/speclj {:mvn/version "3.12.2"}}
-                    :extra-paths ["spec"]}
+                    :extra-paths ["spec" "spec-jvm"]}
            :scrap {:main-opts ["-m" "scrap.core"]
                    :extra-deps {io.github.unclebob/scrap
                                 {:git/url "https://github.com/unclebob/scrap.git"
@@ -19,10 +20,12 @@
                                          {:git/url "https://github.com/unclebob/deintroverter4clj.git"
                                           :git/sha "cd4df96371a5f51c5ef8c6855cd1dd3fba53bb8a"}}
                            :main-opts ["-m" "deintroverter.core"]}
-           :cov {:main-opts ["-m" "speclj.cloverage" "--" "-p" "src" "-s" "spec" "--lcov"]
+           :cov {:main-opts ["-m" "speclj.cloverage"
+                             "-c" "--tag" "~no-mutate" "spec" "spec-jvm"
+                             "--" "-p" "src" "-s" "spec" "-s" "spec-jvm" "--lcov"]
                  :extra-deps {cloverage/cloverage {:mvn/version "1.2.4"}
                               speclj/speclj {:mvn/version "3.12.2"}}
-                 :extra-paths ["spec"]}
+                 :extra-paths ["spec" "spec-jvm"]}
            :property {:main-opts ["-m" "speclj.main" "-c" "spec-property"]
                       :extra-deps {speclj/speclj {:mvn/version "3.12.2"}
                                    org.clojure/test.check {:mvn/version "1.1.1"}}

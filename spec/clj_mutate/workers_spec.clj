@@ -1,5 +1,6 @@
 (ns clj-mutate.workers-spec
   (:require [speclj.core :refer :all]
+            [clj-mutate.project :as project]
             [clj-mutate.workers :as workers])
   (:import [java.io File]
            [java.nio.file Files]))
@@ -26,6 +27,9 @@
           (doseq [config (filter #(.exists (File. %)) ["bb.edn" "deps.edn"])]
             (should (.exists (File. (str dir "/" config))))
             (should-not (Files/isSymbolicLink (.toPath (File. (str dir "/" config))))))
+          (doseq [test-dir (project/test-directories)]
+            (should (Files/isSymbolicLink
+                      (.toPath (File. (str dir "/" test-dir))))))
           (should= original-content (slurp (str dir "/" source-rel))))
         (finally
           (workers/cleanup-worker-dirs! base-dir)))))

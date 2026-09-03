@@ -1,5 +1,6 @@
 (ns clj-mutate.project
-  (:require [clojure.string :as str])
+  (:require [clj-mutate.digest :as digest]
+            [clojure.string :as str])
   (:import [java.io File]))
 
 (defn running-on-babashka?
@@ -27,6 +28,47 @@
   ([] (default-test-command (System/getProperty "user.dir")))
   ([dir]
    (str/join " " (spec-command dir))))
+
+(defn default-coverage-command
+  "Return the default command used to generate LCOV. Babashka projects must
+   opt in because they may not have the Clojure CLI available."
+  []
+  (when-not (running-on-babashka?)
+    "clj -M:cov --lcov"))
+
+(defn test-directories
+  "Return the conventional test roots for the current runtime."
+  ([] (test-directories (System/getProperty "user.dir")))
+  ([dir]
+   (->> (if (running-on-babashka?)
+          ["spec" "spec-bb"]
+          ["spec" "spec-jvm"])
+        (filter #(-> (File. (str dir "/" %)) .isDirectory))
+        vec)))
+
+(defn- source-file?
+  [^File file]
+  (and (.isFile file)
+       (some #(str/ends-with? (.getName file) %)
+             [".clj" ".cljc" ".cljs" ".edn"])))
+
+(defn test-profile-fingerprint
+  "Fingerprint the effective command and conventional runtime-specific test
+   roots. Unrelated development aliases in deps.edn are intentionally ignored."
+  ([test-command]
+   (test-profile-fingerprint (System/getProperty "user.dir") test-command))
+  ([dir test-command]
+   (let [root (File. dir)
+         entries (->> (test-directories dir)
+                      (mapcat #(file-seq (File. root %)))
+                      (filter source-file?)
+                      (map (fn [^File file]
+                             [(.toString (.relativize (.toPath root) (.toPath file)))
+                              (digest/sha-256 (slurp file))]))
+                      (sort-by first)
+                      vec)]
+     (digest/sha-256 (pr-str {:test-command test-command
+                              :files entries})))))
 
 (defn config-file
   "Return the project config filename (bb.edn or deps.edn)."

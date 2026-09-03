@@ -31,6 +31,36 @@
     (with-redefs [project/running-on-babashka? (constantly false)]
       (should= ["clj" "-M:spec" "--tag" "~no-mutate"] (project/spec-command)))))
 
+(describe "runtime test profile"
+  (it "selects the common and JVM-specific test roots on the JVM"
+    (with-redefs [project/running-on-babashka? (constantly false)]
+      (should= ["spec" "spec-jvm"] (project/test-directories))))
+
+  (it "selects the common and Babashka-specific test roots under Babashka"
+    (with-redefs [project/running-on-babashka? (constantly true)]
+      (should= ["spec" "spec-bb"] (project/test-directories))))
+
+  (it "fingerprints effective tests but ignores unrelated deps.edn changes"
+    (let [dir (str "target/test-profile-" (System/nanoTime))
+          spec-dir (File. dir "spec")
+          spec-file (File. spec-dir "sample_spec.clj")
+          deps-file (File. dir "deps.edn")]
+      (.mkdirs spec-dir)
+      (spit spec-file "(ns sample-spec)\n")
+      (spit deps-file "{:aliases {:deintroverter {:old true}}}\n")
+      (try
+        (with-redefs [project/running-on-babashka? (constantly false)]
+          (let [before (project/test-profile-fingerprint dir "clj -M:spec")]
+            (spit deps-file "{:aliases {:deintroverter {:new true}}}\n")
+            (should= before (project/test-profile-fingerprint dir "clj -M:spec"))
+            (spit spec-file "(ns changed-spec)\n")
+            (should-not= before (project/test-profile-fingerprint dir "clj -M:spec"))))
+        (finally
+          (.delete spec-file)
+          (.delete spec-dir)
+          (.delete deps-file)
+          (.delete (File. dir)))))))
+
 (describe "config-file"
   (it "returns bb.edn for bb projects"
     (let [dir (str "target/test-project-cfg-" (System/nanoTime))]

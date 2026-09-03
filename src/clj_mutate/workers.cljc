@@ -49,8 +49,8 @@
 
 (defn create-worker-dirs!
   "Create n worker directories under base-dir. Each gets a copy of the
-   project config, a symlinked spec/, and a source overlay where only the
-   mutated file is a real file."
+   project config, symlinked runtime-appropriate test roots, and a source
+   overlay where only the mutated file is a real file."
   [base-dir source-rel-path original-content n]
   (let [project-root (System/getProperty "user.dir")
         configs (project/config-files project-root)]
@@ -62,8 +62,9 @@
             (let [src (File. (str project-root "/" config))]
               (when (.exists src)
                 (spit (str dir-path "/" config) (slurp src)))))
-          (symlink! (str dir-path "/spec")
-                    (str project-root "/spec"))
+          (doseq [test-dir (project/test-directories project-root)]
+            (symlink! (str dir-path "/" test-dir)
+                      (str project-root "/" test-dir)))
           (setup-source-overlay! dir-path project-root
                                  source-rel-path original-content)
           dir-path)))))

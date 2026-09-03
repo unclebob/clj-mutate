@@ -33,8 +33,8 @@
                        nil
                        "clj -M:spec"
                        report/print-progress)))]
-      (should-contain "[  1/1] KILLED" output)
-      (should-contain "L42" output)))
+      (should-contain "[  1/1] M001  KILLED" output)
+      (should-contain "42:0" output)))
 
   (it "tests all mutations and returns results sorted by index"
     (let [sites [{:index 0 :original '+ :mutant '- :line 5 :description "+ -> -"}
@@ -104,7 +104,7 @@
       (spit temp-path original-content)
       (with-redefs [runner/run-specs (fn [& _] :killed)]
         (let [forms (source/read-source-forms original-content)
-              sites (source/discover-all-mutations forms)
+              sites (source/discover-mutations original-content)
               plus-site (first (filter #(= (:original %) '+) sites))
               result (execution/mutate-and-test temp-path original-content
                                                 forms plus-site 30000 "clj -M:spec")]
@@ -122,8 +122,7 @@
           _ (.mkdirs (.getParentFile source-file))
           original-content "(ns test-ns)\n(defn foo [] (+ 1 2))\n"
           _ (spit (.getPath source-file) original-content)
-          forms (source/read-source-forms original-content)
-          sites (source/discover-all-mutations forms)
+          sites (source/discover-mutations original-content)
           plus-site (first (filter #(= (:original %) '+) sites))
           received-dir (atom nil)]
       (with-redefs [runner/run-specs (fn [timeout dir cmd]

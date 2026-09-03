@@ -16,6 +16,15 @@
       (should= [{:line 8 :form-index 2}]
                (selection/select-mutation-sites sites nil true false #{2}))))
 
+  (it "selects one mutation by readable or persistent identity"
+    (let [sites [{:display-id "M001" :mutation-id "defn/a/1/rule"}
+                 {:display-id "M002" :mutation-id "defn/b/2/rule"}]]
+      (should= [(first sites)]
+               (selection/select-mutation-sites sites nil "M001" false false nil))
+      (should= [(second sites)]
+               (selection/select-mutation-sites
+                 sites nil "defn/b/2/rule" false false nil))))
+
   (it "returns all covered sites when no filter applies"
     (let [sites [{:line 3} {:line 8}]]
       (should= sites (selection/select-mutation-sites sites nil false false nil)))))

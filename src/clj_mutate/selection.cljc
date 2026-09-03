@@ -15,6 +15,14 @@
   [sites form-indices]
   (filter-sites-by sites form-indices :form-index))
 
+(defn filter-by-mutation
+  [sites mutation-selector]
+  (if mutation-selector
+    (vec (filter #(or (= mutation-selector (:display-id %))
+                      (= mutation-selector (:mutation-id %)))
+                 sites))
+    sites))
+
 (defn default-since-last-run?
   [lines since-last-run mutate-all prior-manifest]
   (and (nil? lines)
@@ -22,12 +30,15 @@
        (or since-last-run (map? prior-manifest))))
 
 (defn select-mutation-sites
-  [covered-sites lines since-last-run module-unchanged? changed-forms]
-  (cond
-    lines (filter-by-lines covered-sites lines)
-    module-unchanged? []
-    since-last-run (filter-by-form-indices covered-sites changed-forms)
-    :else covered-sites))
+  ([covered-sites lines since-last-run module-unchanged? changed-forms]
+   (select-mutation-sites covered-sites lines nil since-last-run module-unchanged? changed-forms))
+  ([covered-sites lines mutation-selector since-last-run module-unchanged? changed-forms]
+   (cond
+     mutation-selector (filter-by-mutation covered-sites mutation-selector)
+     lines (filter-by-lines covered-sites lines)
+     module-unchanged? []
+     since-last-run (filter-by-form-indices covered-sites changed-forms)
+     :else covered-sites)))
 
 (defn count-changed-sites
   [all-sites prior-manifest forms]

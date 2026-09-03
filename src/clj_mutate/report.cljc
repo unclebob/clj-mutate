@@ -1,5 +1,7 @@
 (ns clj-mutate.report
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str])
+  (:import [java.time Instant ZoneId ZonedDateTime]
+           [java.time.format DateTimeFormatter]))
 
 (defn print-previous-mutation-test
   [prev-date]
@@ -19,17 +21,42 @@
   (println (format "Changed mutation sites: %d" changed-sites))
   (print-mutation-warning mutation-warning total-sites))
 
-(defn- print-reuse-lcov-status
-  [reuse-lcov coverage-status]
-  (when reuse-lcov
-    (println (format "Reusing existing LCOV data from %s."
-                     (:lcov-path coverage-status)))
-    (println "Warning: coverage may be stale; covered/uncovered site classification may be inaccurate.")
-    (println (format "LCOV exists: %s" (if (:exists? coverage-status) "yes" "no")))
-    (when (:last-modified coverage-status)
-      (println (format "LCOV last modified: %d" (:last-modified coverage-status))))
-    (println (format "Target source newer than LCOV: %s"
-                     (if (:source-newer? coverage-status) "yes" "no")))))
+(defn- human-time
+  [epoch-ms]
+  (when epoch-ms
+    (.format (ZonedDateTime/ofInstant (Instant/ofEpochMilli epoch-ms)
+                                      (ZoneId/systemDefault))
+             (DateTimeFormatter/ofPattern "yyyy-MM-dd HH:mm:ss z"))))
+
+(defn- print-coverage-status
+  [{:keys [status lcov-path last-modified]}]
+  (case status
+    :fresh
+    (println (format "Using fresh LCOV generated %s for the requested mutation test profile."
+                     (human-time last-modified)))
+
+    :fresh-reused
+    (println (format "Reusing fresh LCOV from %s (generated %s)."
+                     lcov-path (human-time last-modified)))
+
+    :stale-reused
+    (println (format "Reusing stale LCOV generated %s; source or test files have changed since it was generated."
+                     (human-time last-modified)))
+
+    :regenerated
+    (println (format "Generated LCOV for the requested mutation test profile at %s."
+                     (human-time last-modified)))
+
+    :refresh-failed
+    (println "Coverage generation failed; existing LCOV was not trusted.")
+
+    :missing
+    (println "Coverage data is missing and no usable LCOV file was generated.")
+
+    :coverage-disabled
+    (println "No coverage command is configured; running mutations without LCOV filtering.")
+
+    nil))
 
 (defn- print-site-counts
   [all-sites covered-sites uncovered changed-mutation-sites]
@@ -59,6 +86,12 @@
     (println (format "Filtering to lines: %s → %d mutations to test."
                      (str/join "," (sort lines)) (count sites)))))
 
+(defn- print-mutation-filter
+  [mutation sites]
+  (when mutation
+    (println (format "Filtering to mutation %s → %d mutation to test."
+                     mutation (count sites)))))
+
 (defn- print-since-last-run-filter
   [since-last-run prior-manifest module-unchanged? sites]
   (when since-last-run
@@ -70,21 +103,35 @@
       (println "No prior embedded manifest found; running all covered mutations."))))
 
 (defn print-run-header
-  [source-path prev-date header-info lines since-last-run prior-manifest module-unchanged? sites warning-threshold]
-  (let [{:keys [all-sites covered-sites uncovered changed-mutation-sites
-                manifest-exists? module-hash-changed? reuse-lcov coverage-status]
-         :as info} header-info
-        surface-counts (:surface-area-counts info)]
-    (println (format "=== Mutation Testing: %s ===" source-path))
-    (print-previous-mutation-test prev-date)
-    (print-reuse-lcov-status reuse-lcov coverage-status)
-    (print-site-counts all-sites covered-sites uncovered changed-mutation-sites)
-    (print-manifest-status manifest-exists? module-hash-changed?)
-    (print-surface-area surface-counts)
-    (print-mutation-warning warning-threshold (count all-sites))
-    (print-line-filter lines sites)
-    (print-since-last-run-filter since-last-run prior-manifest module-unchanged? sites)
-    (println)))
+  ([source-path prev-date header-info lines since-last-run prior-manifest module-unchanged? sites warning-threshold]
+   (print-run-header source-path prev-date header-info lines nil since-last-run
+                     prior-manifest module-unchanged? sites warning-threshold))
+  ([source-path prev-date header-info lines mutation since-last-run prior-manifest module-unchanged? sites warning-threshold]
+   (let [{:keys [all-sites covered-sites uncovered changed-mutation-sites
+                 manifest-exists? module-hash-changed? coverage-status]
+          :as info} header-info]
+     (println (format "=== Mutation Testing: %s ===" source-path))
+     (print-previous-mutation-test prev-date)
+     (print-coverage-status coverage-status)
+     (print-site-counts all-sites covered-sites uncovered changed-mutation-sites)
+     (print-manifest-status manifest-exists? module-hash-changed?)
+     (print-surface-area (:surface-area-counts info))
+     (print-mutation-warning warning-threshold (count all-sites))
+     (print-line-filter lines sites)
+     (print-mutation-filter mutation sites)
+     (print-since-last-run-filter since-last-run prior-manifest module-unchanged? sites)
+     (println))))
+
+(defn- site-id
+  [site]
+  (or (:display-id site)
+      (when (some? (:run-index site)) (format "M%03d" (inc (:run-index site))))
+      (when (some? (:index site)) (format "M%03d" (inc (:index site))))
+      "M???"))
+
+(defn- site-location
+  [site]
+  (format "%d:%d" (or (:line site) 0) (or (:column site) 0)))
 
 (defn print-uncovered
   [uncovered]
@@ -92,29 +139,39 @@
     (println (format "\n=== Coverage Gaps (%d mutations on uncovered lines) ==="
                      (count uncovered)))
     (doseq [site uncovered]
-      (println (format "  line %d: %s" (:line site) (:description site))))))
+      (println (format "  %s  %-18s %s  %s"
+                       (site-id site) (or (:form-id site) "")
+                       (site-location site) (:description site))))))
 
 (defn- print-summary
   [killed total pct survivors uncovered-count]
-  (println (format "\n=== Summary ==="))
-  (println (format "%d/%d mutants killed (%.1f%%)" killed total pct))
+  (println "\n=== Summary ===")
+  (if (zero? total)
+    (println "No covered mutations to test.")
+    (println (format "%d/%d mutants killed (%.1f%%)" killed total pct)))
   (when (pos? uncovered-count)
-    (println (format "%d uncovered mutations skipped" uncovered-count)))
+    (println (format "%d uncovered mutations remain" uncovered-count)))
   (when (seq survivors)
     (println "Survivors:")
-    (doseq [r survivors]
-      (println (format "  #%d  L%-4d %s"
-                       (inc (:index (:site r)))
-                       (or (:line (:site r)) 0)
-                       (:description (:site r)))))))
+    (doseq [r (sort-by (juxt #(get-in % [:site :line])
+                             #(get-in % [:site :column])) survivors)]
+      (let [site (:site r)]
+        (println (format "  %s  %-18s %s  %s"
+                         (site-id site) (or (:form-id site) "")
+                         (site-location site) (:description site)))))))
 
 (defn summarize-results
   [results lines since-last-run uncovered]
   (let [killed (count (filter #(= :killed (:result %)) results))
         total (count results)
         pct (if (zero? total) 0.0 (* 100.0 (/ killed total)))
-        survivors (filter #(= :survived (:result %)) results)]
-    (print-summary killed total pct survivors (if (or lines since-last-run) 0 (count uncovered)))))
+        survivors (vec (filter #(= :survived (:result %)) results))
+        uncovered-count (count uncovered)]
+    (print-summary killed total pct survivors uncovered-count)
+    {:mutations total
+     :killed killed
+     :survivors (count survivors)
+     :uncovered uncovered-count}))
 
 (defn- result-label
   [r]
@@ -125,12 +182,17 @@
 
 (defn- format-line
   [i total r]
-  (format "[%3d/%d] %-8s  L%-4d %s%n"
-          (inc i) total (result-label r) (or (:line (:site r)) 0) (:description (:site r))))
+  (let [site (:site r)]
+    (format "[%3d/%d] %s  %-8s  %-18s %s  %s%n"
+            (inc i) total (site-id site) (result-label r)
+            (or (:form-id site) "") (site-location site) (:description site))))
 
 (defn- format-survivor
   [r]
-  (format "  #%d  L%-4d %s%n" (inc (or (:index (:site r)) 0)) (or (:line (:site r)) 0) (:description (:site r))))
+  (let [site (:site r)]
+    (format "  %s  %-18s %s  %s%n"
+            (site-id site) (or (:form-id site) "")
+            (site-location site) (:description site))))
 
 (defn format-report
   [source-path results uncovered-count]
@@ -143,26 +205,34 @@
       (format "Found %d mutation sites.%n%n" total)
       (apply str (map-indexed #(format-line %1 total %2) results))
       (format "%n=== Summary ===%n")
-      (format "%d/%d mutants killed (%.1f%%)%n" killed total pct)
+      (if (zero? total)
+        "No covered mutations to test.\n"
+        (format "%d/%d mutants killed (%.1f%%)%n" killed total pct))
       (when (pos? uncovered-count)
-        (format "%d uncovered mutations skipped%n" uncovered-count))
+        (format "%d uncovered mutations remain%n" uncovered-count))
       (when (seq survivors)
-        (str "Survivors:\n"
-             (apply str (map format-survivor survivors)))))))
+        (str "Survivors:\n" (apply str (map format-survivor survivors)))))))
 
 (defn print-progress
   [i total result site]
-  (println (format "[%3d/%d] %-8s  L%-4d %s"
-                   (inc i) total
-                   (result-label result)
-                   (or (:line site) 0)
+  (println (format "[%3d/%d] %s  %-8s  %-18s %s  %s"
+                   (inc i) total (site-id site) (result-label result)
+                   (or (:form-id site) "") (site-location site)
                    (:description site)))
   (flush))
 
-(defn print-baseline-start
-  []
-  (print "Baseline: ")
-  (flush))
+(defn print-no-changes
+  [source-path previous-date]
+  (println (format "=== Mutation Testing: %s ===" source-path))
+  (println (format "No changes since the successful mutation run at %s."
+                   previous-date))
+  (println "No mutations to test."))
+
+(defn print-configuration-error
+  [message]
+  (println (str "Error: " message)))
+
+(defn print-baseline-start [] (print "Baseline: ") (flush))
 
 (defn print-baseline-pass
   [elapsed-ms timeout-ms]
@@ -179,8 +249,8 @@
 
 (defn print-manifest-updated
   [source-path]
-  (println (str "Updated manifest: " source-path)))
+  (println (str "Updated unverified manifest: " source-path)))
 
 ;; clj-mutate-manifest-begin
-;; {:version 1, :tested-at "2026-09-02T15:18:37.279832-05:00", :module-hash "144987029", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line nil, :hash "609215190"} {:id "defn/print-previous-mutation-test", :kind "defn", :line 4, :end-line nil, :hash "1006989162"} {:id "defn/print-mutation-warning", :kind "defn", :line 9, :end-line nil, :hash "-8091185"} {:id "defn/print-scan-report", :kind "defn", :line 14, :end-line nil, :hash "1501487419"} {:id "defn-/print-reuse-lcov-status", :kind "defn-", :line 22, :end-line nil, :hash "245360152"} {:id "defn-/print-site-counts", :kind "defn-", :line 34, :end-line nil, :hash "-668192430"} {:id "defn-/print-manifest-status", :kind "defn-", :line 41, :end-line nil, :hash "1457750507"} {:id "defn-/print-surface-area", :kind "defn-", :line 49, :end-line nil, :hash "1682025556"} {:id "defn-/print-line-filter", :kind "defn-", :line 56, :end-line nil, :hash "1854309138"} {:id "defn-/print-since-last-run-filter", :kind "defn-", :line 62, :end-line nil, :hash "1987635254"} {:id "defn/print-run-header", :kind "defn", :line 72, :end-line nil, :hash "-665253061"} {:id "defn/print-uncovered", :kind "defn", :line 89, :end-line nil, :hash "-1174101582"} {:id "defn-/print-summary", :kind "defn-", :line 97, :end-line nil, :hash "-647776276"} {:id "defn/summarize-results", :kind "defn", :line 111, :end-line nil, :hash "189360272"} {:id "defn-/result-label", :kind "defn-", :line 119, :end-line nil, :hash "-1992427708"} {:id "defn-/format-line", :kind "defn-", :line 126, :end-line nil, :hash "-1409718304"} {:id "defn-/format-survivor", :kind "defn-", :line 131, :end-line nil, :hash "791497139"} {:id "defn/format-report", :kind "defn", :line 135, :end-line nil, :hash "1704235782"} {:id "defn/print-progress", :kind "defn", :line 153, :end-line nil, :hash "684719315"} {:id "defn/print-baseline-start", :kind "defn", :line 162, :end-line nil, :hash "1826251280"} {:id "defn/print-baseline-pass", :kind "defn", :line 167, :end-line nil, :hash "558159954"} {:id "defn/print-baseline-fail", :kind "defn", :line 172, :end-line nil, :hash "-348864397"} {:id "defn/print-backup-restored", :kind "defn", :line 176, :end-line nil, :hash "677037454"} {:id "defn/print-manifest-updated", :kind "defn", :line 180, :end-line nil, :hash "-954257762"}]}
+;; {:version 1, :tested-at "2026-09-02T15:18:37.279832-05:00", :module-hash "144987029", :forms []}
 ;; clj-mutate-manifest-end

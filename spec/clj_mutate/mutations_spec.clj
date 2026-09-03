@@ -66,16 +66,28 @@
       (should (has-site? '> '>= gt-sites)))))
 
 (describe "rand-nth guard suppression"
-  (it "suppresses mutations inside the rand-nth single-element guard"
-    (let [suppressed-sites (m/find-mutations '(if (= 1 (count v)) (first v) (rand-nth v)))
-          equality-control-sites (m/find-mutations '(if (= 1 x) :a :b))
-          conditional-control-sites (m/find-mutations '(if (> x 0) (first v) (rand-nth v)))]
-      (should (has-site? '= 'not= equality-control-sites))
-      (should-not (has-site? '= 'not= suppressed-sites))
-      (should (has-site? 'if 'if-not conditional-control-sites))
-      (should-not (has-site? 'if 'if-not suppressed-sites))
-      (should (has-site? 1 0 equality-control-sites))
-      (should-not (has-site? 1 0 suppressed-sites))))
+  (it "suppresses a valid if guard"
+    (let [sites (m/find-mutations '(if (= 1 (count v)) (first v) (rand-nth v)))]
+      (should-not (has-site? '= 'not= sites))
+      (should-not (has-site? 'if 'if-not sites))
+      (should-not (has-site? 1 0 sites))))
+
+  (it "suppresses a valid branch-reversed if-not guard"
+    (let [sites (m/find-mutations '(if-not (= 1 (count v)) (rand-nth v) (first v)))]
+      (should-not (has-site? '= 'not= sites))
+      (should-not (has-site? 'if-not 'if sites))
+      (should-not (has-site? 1 0 sites))))
+
+  (it "does not suppress an if-not guard whose branches were not reversed"
+    (let [sites (m/find-mutations '(if-not (= 1 (count v)) (first v) (rand-nth v)))]
+      (should (has-site? '= 'not= sites))
+      (should (has-site? 'if-not 'if sites))
+      (should (has-site? 1 0 sites))))
+
+  (it "does not suppress a lookalike headed by another form"
+    (let [sites (m/find-mutations '(choose (= 1 (count v)) (first v) (rand-nth v)))]
+      (should (has-site? '= 'not= sites))
+      (should (has-site? 1 0 sites))))
 
   (it "does not suppress mutations outside the rand-nth guard"
     (let [equality-sites (m/find-mutations '(if (= 1 x) :a :b))
@@ -111,6 +123,26 @@
     (let [sites (m/find-mutations '(if (> (count v) 10) (subvec v 0 10) v))]
       (should (has-site? 'if 'if-not sites))
       (should-not (has-site? '> '>= sites))))
+
+  (it "suppresses >= -> > at the same if trim boundary"
+    (let [sites (m/find-mutations '(if (>= (count v) 10) (subvec v 0 10) v))]
+      (should-not (has-site? '>= '> sites))))
+
+  (it "suppresses > -> >= in a branch-reversed if-not trim"
+    (let [sites (m/find-mutations '(if-not (> (count v) 10) v (subvec v 0 10)))]
+      (should-not (has-site? '> '>= sites))))
+
+  (it "suppresses >= -> > in a branch-reversed if-not trim"
+    (let [sites (m/find-mutations '(if-not (>= (count v) 10) v (subvec v 0 10)))]
+      (should-not (has-site? '>= '> sites))))
+
+  (it "does not suppress an if-not trim whose branches were not reversed"
+    (let [sites (m/find-mutations '(if-not (> (count v) 10) (subvec v 0 10) v))]
+      (should (has-site? '> '>= sites))))
+
+  (it "does not suppress a trim lookalike headed by another form"
+    (let [sites (m/find-mutations '(choose (> (count v) 10) (subvec v 0 10) v))]
+      (should (has-site? '> '>= sites))))
 
   (it "does not suppress > -> >= in non-subvec contexts"
     (let [sites (m/find-mutations '(if (> x 10) :a :b))]

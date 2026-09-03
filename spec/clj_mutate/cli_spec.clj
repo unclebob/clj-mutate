@@ -25,6 +25,8 @@
                  [[temp-source-path "--lines"] "Missing value for --lines."]
                  [[temp-source-path "--timeout-factor"] "Missing value for --timeout-factor."]
                  [[temp-source-path "--test-command"] "Missing value for --test-command."]
+                 [[temp-source-path "--coverage-command"] "Missing value for --coverage-command."]
+                 [[temp-source-path "--mutation"] "Missing value for --mutation."]
                  [[temp-source-path "--max-workers"] "Missing value for --max-workers."]
                  [[temp-source-path "--mutation-warning"] "Missing value for --mutation-warning."]
                  [[temp-source-path "--timeout-factor" "0"] :error]
@@ -49,6 +51,8 @@
                   [#(should= temp-source-path (:source-path %))
                    #(should= 10 (:timeout-factor %))
                    #(should= (project/default-test-command) (:test-command %))
+                   #(should= (project/default-coverage-command) (:coverage-command %))
+                   #(should-be-nil (:mutation %))
                    #(should= false (:since-last-run %))
                    #(should= false (:mutate-all %))
                    #(should= 100 (:mutation-warning %))
@@ -67,8 +71,14 @@
                   [#(should= 75 (:mutation-warning %))]]
                  [[temp-source-path "--timeout-factor" "7"]
                   [#(should= 7 (:timeout-factor %))]]
-                 [[temp-source-path "--test-command" "clj -M:all-tests"]
+                 [[temp-source-path "--test-command" "clj -M:all-tests" "--no-coverage"]
                   [#(should= "clj -M:all-tests" (:test-command %))]]
+                 [[temp-source-path "--coverage-command" "clj -M:mutation-cov"]
+                  [#(should= "clj -M:mutation-cov" (:coverage-command %))]]
+                 [[temp-source-path "--no-coverage"]
+                  [#(should= false (:coverage-command %))]]
+                 [[temp-source-path "--mutation" "M017"]
+                  [#(should= "M017" (:mutation %))]]
                  [[temp-source-path "--max-workers" "3"]
                   [#(should= 3 (:max-workers %))]]]]
           (let [result (cli/validate-args args)]
@@ -102,6 +112,25 @@
                       [temp-source-path "--reuse-lcov" "--scan"]
                       [temp-source-path "--update-manifest" "--reuse-lcov"]
                       [temp-source-path "--reuse-lcov" "--update-manifest"]]]
+          (should-contain :error (cli/validate-args args))))))
+
+  (it "requires an explicit coverage policy with a custom test command"
+    (with-temp-source-path
+      (fn [temp-source-path]
+        (let [result (cli/validate-args
+                       [temp-source-path "--test-command" "clj -M:custom"])]
+          (should-contain "requires --coverage-command or --no-coverage" (:error result))))))
+
+  (it "rejects conflicting precise selectors and coverage policies"
+    (with-temp-source-path
+      (fn [temp-source-path]
+        (doseq [args [[temp-source-path "--mutation" "M001" "--lines" "3"]
+                      [temp-source-path "--lines" "3" "--mutation" "M001"]
+                      [temp-source-path "--mutation" "M001" "--mutate-all"]
+                      [temp-source-path "--coverage-command" "clj -M:cov" "--no-coverage"]
+                      [temp-source-path "--no-coverage" "--coverage-command" "clj -M:cov"]
+                      [temp-source-path "--reuse-lcov" "--no-coverage"]
+                      [temp-source-path "--no-coverage" "--reuse-lcov"]]]
           (should-contain :error (cli/validate-args args)))))))
 
 (run-specs)

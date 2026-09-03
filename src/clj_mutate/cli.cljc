@@ -16,7 +16,10 @@
     "  --scan                Report mutation counts without running tests or coverage\n"
     "  --update-manifest     Rewrite the embedded manifest without running mutations\n"
     "  --reuse-lcov          Reuse existing LCOV data without refreshing coverage\n"
+    "  --coverage-command CMD Command that generates LCOV for the mutation test profile\n"
+    "  --no-coverage         Run all selected mutants without LCOV filtering\n"
     "  --lines L1,L2,...      Run only mutations on these source lines\n"
+    "  --mutation ID          Run one mutation by M-number or persistent mutation ID\n"
     "  --since-last-run       Run only mutations in changed top-level forms since last successful run\n"
     "  --mutate-all           Run all covered mutations even if a manifest exists\n"
     "  --mutation-warning N   Warn when more than N mutations are found (default 100)\n"
@@ -30,7 +33,9 @@
    :scan false
    :update-manifest false
    :reuse-lcov false
+   :coverage-command nil
    :lines nil
+   :mutation nil
    :since-last-run false
    :mutate-all false
    :mutation-warning 100
@@ -41,7 +46,9 @@
 
 (defn- initial-options
   []
-  (assoc default-options :test-command (default-test-command)))
+  (assoc default-options
+         :test-command (default-test-command)
+         :coverage-command (project/default-coverage-command)))
 
 (defn- parse-lines
   [value]
@@ -79,8 +86,8 @@
 
 (defn- parse-lines-option
   [options value]
-  (if (or (:scan options) (:update-manifest options) (:since-last-run options) (:mutate-all options))
-    (usage-error "Cannot combine --lines with --scan, --update-manifest, --since-last-run, or --mutate-all.")
+  (if (or (:scan options) (:update-manifest options) (:since-last-run options) (:mutate-all options) (:mutation options))
+    (usage-error "Cannot combine --lines with --scan, --update-manifest, --since-last-run, --mutate-all, or --mutation.")
     (let [parsed-lines (parse-lines value)]
       (if (every? some? parsed-lines)
         (assoc options :lines parsed-lines)
@@ -107,6 +114,24 @@
         (usage-error "Missing value for --test-command.")
         (mark-explicit (assoc options :test-command value) :test-command))))
 
+(defn- parse-coverage-command-option
+  [options value]
+  (or (reject-scan-or-update options "--coverage-command")
+      (when (false? (:coverage-command options))
+        (usage-error "Cannot combine --coverage-command with --no-coverage."))
+      (if (str/blank? value)
+        (usage-error "Missing value for --coverage-command.")
+        (mark-explicit (assoc options :coverage-command value) :coverage-command))))
+
+(defn- parse-mutation-option
+  [options value]
+  (if (or (:scan options) (:update-manifest options) (:lines options)
+          (:since-last-run options) (:mutate-all options))
+    (usage-error "Cannot combine --mutation with --scan, --update-manifest, --lines, --since-last-run, or --mutate-all.")
+    (if (str/blank? value)
+      (usage-error "Missing value for --mutation.")
+      (assoc options :mutation value))))
+
 (defn- parse-max-workers-option
   [options value]
   (parse-int-execution-option options value :max-workers "--max-workers"))
@@ -120,6 +145,8 @@
    "--mutation-warning" parse-mutation-warning-option
    "--timeout-factor" parse-timeout-factor-option
    "--test-command" parse-test-command-option
+   "--coverage-command" parse-coverage-command-option
+   "--mutation" parse-mutation-option
    "--max-workers" parse-max-workers-option})
 
 (defn- update-arg-option
@@ -131,9 +158,11 @@
   (or (:lines options)
       (:since-last-run options)
       (:mutate-all options)
+      (:mutation options)
       (:reuse-lcov options)
       (contains? (:explicit-options options) :timeout-factor)
       (contains? (:explicit-options options) :test-command)
+      (contains? (:explicit-options options) :coverage-command)
       (contains? (:explicit-options options) :max-workers)))
 
 (defn- enable-unless-conflict
@@ -153,12 +182,12 @@
     :message "Cannot combine --update-manifest with --scan or mutation execution options."}
    "--since-last-run"
    {:key :since-last-run
-    :conflict-fn #(or (:scan %) (:update-manifest %) (:lines %) (:mutate-all %))
-    :message "Cannot combine --since-last-run with --scan, --update-manifest, --lines, or --mutate-all."}
+    :conflict-fn #(or (:scan %) (:update-manifest %) (:lines %) (:mutation %) (:mutate-all %))
+    :message "Cannot combine --since-last-run with --scan, --update-manifest, --lines, --mutation, or --mutate-all."}
    "--mutate-all"
    {:key :mutate-all
-    :conflict-fn #(or (:scan %) (:update-manifest %) (:lines %) (:since-last-run %))
-    :message "Cannot combine --mutate-all with --scan, --update-manifest, --lines, or --since-last-run."}})
+    :conflict-fn #(or (:scan %) (:update-manifest %) (:lines %) (:mutation %) (:since-last-run %))
+    :message "Cannot combine --mutate-all with --scan, --update-manifest, --lines, --mutation, or --since-last-run."}})
 
 (defn- consume-flag
   [options arg rest-args]
@@ -178,9 +207,21 @@
     (consume-flag options arg rest-args)
 
     (= "--reuse-lcov" arg)
-    (if-let [err (reject-scan-or-update options "--reuse-lcov")]
+    (if-let [err (or (reject-scan-or-update options "--reuse-lcov")
+                     (when (false? (:coverage-command options))
+                       (usage-error "Cannot combine --reuse-lcov with --no-coverage.")))]
       [rest-args err]
       [rest-args (assoc options :reuse-lcov true)])
+
+    (= "--no-coverage" arg)
+    (if-let [err (or (reject-scan-or-update options "--no-coverage")
+                     (when (:reuse-lcov options)
+                       (usage-error "Cannot combine --no-coverage with --reuse-lcov."))
+                     (when (contains? (:explicit-options options) :coverage-command)
+                       (usage-error "Cannot combine --no-coverage with --coverage-command.")))]
+      [rest-args err]
+      [rest-args (mark-explicit (assoc options :coverage-command false)
+                                :coverage-command)])
 
     (contains? option-updaters arg)
     (consume-valued-option options arg rest-args)
@@ -201,7 +242,12 @@
     (loop [[arg & rest-args] args
            options (initial-options)]
       (if (nil? arg)
-        (ensure-source-path options)
+        (let [checked (ensure-source-path options)]
+          (if (and (not (:error checked))
+                   (contains? (:explicit-options checked) :test-command)
+                   (not (contains? (:explicit-options checked) :coverage-command)))
+            (usage-error "A custom --test-command requires --coverage-command or --no-coverage so coverage cannot silently use a different test population.")
+            checked))
         (let [[remaining updated-options] (consume-option options arg rest-args)]
           (if (:error updated-options)
             updated-options

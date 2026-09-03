@@ -48,11 +48,14 @@ clj -M:mutate src/myapp/foo.cljc
 # Scan a file for mutation counts without running coverage or specs
 clj -M:mutate src/myapp/foo.cljc --scan
 
-# Rewrite the embedded manifest without running coverage or mutations
+# Rewrite the embedded manifest without claiming that mutations passed
 clj -M:mutate src/myapp/foo.cljc --update-manifest
 
 # Retest only specific lines (e.g. survivors from a previous run)
 clj -M:mutate src/myapp/foo.cljc --lines 45,67,89
+
+# Retest one exact mutant shown in a report
+clj -M:mutate src/myapp/foo.cljc --mutation M017
 
 # Force differential mutation even if you want to be explicit
 clj -M:mutate src/myapp/foo.cljc --since-last-run
@@ -72,8 +75,14 @@ clj -M:mutate src/myapp/foo.cljc --max-workers 4
 # Use a custom infinite-loop timeout multiplier (baseline factor)
 clj -M:mutate src/myapp/foo.cljc --timeout-factor 15
 
-# Use a custom test command (quote commands containing spaces)
-clj -M:mutate src/myapp/foo.cljc --test-command "clj -M:spec --tag ~slow"
+# Use matching custom test and coverage profiles
+clj -M:mutate src/myapp/foo.cljc \
+  --test-command "clj -M:mutation-spec" \
+  --coverage-command "clj -M:mutation-cov"
+
+# Explicitly run every selected mutant without LCOV filtering
+clj -M:mutate src/myapp/foo.cljc \
+  --test-command "clj -M:mutation-spec" --no-coverage
 
 # Show command usage help
 clj -M:mutate --help
@@ -83,8 +92,9 @@ bb mutate --help
 The tool automatically:
 - Runs a baseline test (`clj -M:spec --tag ~no-mutate`) to verify all included specs pass unmodified
 - Applies each mutation, runs all specs with a timeout (`--timeout-factor`, default 10x baseline)
+- Targets exact concrete-syntax nodes, preserving comments and formatting
 - Restores the original file after each mutation
-- Writes an embedded footer manifest with the last test date and top-level form hashes
+- Writes a verified embedded footer manifest only after a successful mutation run
 - Updates that embedded manifest after successful differential runs as well as full runs
 - Defaults to differential mutation when that footer manifest is already present
 - Prints a warning when mutation count exceeds `--mutation-warning` (default `100`)
@@ -96,7 +106,7 @@ The tool automatically:
 - changed mutation sites relative to the embedded manifest
 - the standard mutation-count warning
 
-`--update-manifest` rewrites the embedded footer manifest for the file's current contents without running coverage, baseline specs, or mutation workers.
+`--update-manifest` rewrites the embedded footer manifest for the file's current contents without running coverage, baseline specs, or mutation workers. The result is marked unverified, so it cannot cause a no-change short circuit.
 
 ## Recommended Workflow
 
@@ -169,9 +179,23 @@ The footer manifest is embedded at the end of the source file and records:
 - the last successful mutation test date
 - each top-level form's id
 - its line span
-- a hash of its normalized form
+- a versioned SHA-256 hash of its normalized original source slice
+- the mutation-rule version and effective test-profile fingerprint
 
 Differential mutation runs update the footer manifest on success, so the next differential run compares against the latest successful mutation baseline.
+If the source, mutation rules, or effective test profile has not changed, the tool reports `No mutations to test` without loading coverage, running the baseline, or creating workers. Version-1 manifests are treated as stale and upgraded only after a successful run. The hashes are portable between JVM Clojure and Babashka.
+
+Every mutant is reported with a file-global identifier such as `M017`, its persistent form/path/rule identity, and an exact `line:column` location. Use `--mutation M017` (or the persistent identity) for a precise rerun.
+
+## Exit Statuses
+
+| Status | Meaning |
+| ---: | --- |
+| `0` | All selected mutants were killed, no mutations needed testing, or a reporting command succeeded |
+| `1` | Invalid arguments, missing inputs, or coverage/configuration failure |
+| `2` | The unmodified baseline tests failed |
+| `3` | Survivors or in-scope uncovered mutations remain |
+| `4` | Internal mutation-engine failure, such as a no-op or mismatched syntax target |
 
 ## Mutation Rules
 
@@ -190,25 +214,30 @@ Known-equivalent mutations (e.g. comparisons on `(rand)`, constants inside `rand
 
 If a `:cov` alias is configured with [Cloverage](https://github.com/cloverage/cloverage) and `--lcov` output, the tool reads `target/coverage/lcov.info` to skip mutations on uncovered lines.
 
-Coverage freshness is checked automatically:
+Coverage freshness and provenance are checked automatically:
 - If `target/coverage/lcov.info` is missing, `clj-mutate` regenerates it with `clj -M:cov --lcov`.
 - If LCOV is older than current source/spec inputs, `clj-mutate` regenerates it with `clj -M:cov --lcov`.
-- The run prints a diagnostic message when regeneration is triggered.
+- `target/coverage/clj-mutate.edn` records the coverage command, test command, and effective test-profile fingerprint.
+- A custom `--test-command` requires a matching `--coverage-command`, or `--no-coverage` to disable LCOV filtering explicitly.
 - If a mutation site sits on a `recur` argument line or a nested loop-state update expression, LCOV may emit no `DA` entry for that line. In that case `clj-mutate` classifies the site as uncovered even when behavior-level tests exercise the path.
 
 With `--reuse-lcov`:
-- `clj-mutate` uses the existing `target/coverage/lcov.info` as-is
-- stale coverage is allowed
-- the run prints a warning that covered/uncovered classification may be inaccurate
-- the run prints whether the LCOV file exists, its last modified time when present, and whether the target source is newer than the LCOV file
+- `clj-mutate` first verifies that the recorded test profile matches the requested run
+- stale matching coverage is allowed and produces one human-readable, timezone-qualified warning
+- fresh matching coverage produces one concise reuse message
 - if `target/coverage/lcov.info` is missing, the run prints a clear error and exits with status `1`
+- unknown or mismatched provenance is rejected instead of being silently trusted
 
 ```clojure
-:cov {:main-opts ["-m" "speclj.cloverage" "--" "-p" "src" "-s" "spec" "--lcov"]
+:cov {:main-opts ["-m" "speclj.cloverage"
+                  "--tag" "~no-mutate" "spec" "spec-jvm"
+                  "--" "-p" "src" "-s" "spec" "-s" "spec-jvm" "--lcov"]
       :extra-deps {cloverage/cloverage {:mvn/version "1.2.4"}
                    speclj/speclj {:mvn/version "3.10.0"}}
-      :extra-paths ["spec"]}
+      :extra-paths ["spec" "spec-jvm"]}
 ```
+
+This repository keeps runtime-neutral specs in `spec/`, JVM process-proxy specs in `spec-jvm/`, and Babashka replacements in `spec-bb/`. Its JVM and Babashka commands each run the common suite plus the appropriate runtime-specific suite. This is repository configuration only: `clj-mutate` never substitutes tests in an external project.
 
 ## Parallel Worker Isolation
 
