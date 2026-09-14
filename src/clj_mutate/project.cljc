@@ -205,28 +205,18 @@
   (boolean (some #{"-n" "--namespace"} (command-tokens command))))
 
 (defn test-profile-fingerprint
-  "Fingerprint the effective command and conventional runtime-specific test
-   roots. Only the selected alias/task configuration is included, so unrelated
-   development aliases in deps.edn remain intentionally ignored."
+  "Fingerprint the effective test command, roots, and selected alias/task
+   config. Test file contents are not hashed, so editing specs does not
+   invalidate differential mutation. Unrelated deps.edn aliases are ignored."
   ([test-command]
    (test-profile-fingerprint (System/getProperty "user.dir") test-command nil))
   ([dir test-command]
    (test-profile-fingerprint dir test-command nil))
   ([dir test-command explicit-roots]
-   (let [root (File. dir)
-         roots (test-profile-roots dir test-command explicit-roots)
-         entries (->> roots
-                      (mapcat #(file-seq (File. root %)))
-                      (filter source-file?)
-                      (map (fn [^File file]
-                             [(.toString (.relativize (.toPath root) (.toPath file)))
-                              (digest/sha-256 (slurp file))]))
-                      (sort-by first)
-                      vec)]
+   (let [roots (test-profile-roots dir test-command explicit-roots)]
      (digest/sha-256 (pr-str {:test-command test-command
                               :test-roots roots
-                              :selected-config (selected-command-config dir test-command)
-                              :files entries})))))
+                              :selected-config (selected-command-config dir test-command)})))))
 
 (defn config-file
   "Return the project config filename (bb.edn or deps.edn)."

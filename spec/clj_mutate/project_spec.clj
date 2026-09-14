@@ -58,7 +58,7 @@
           (.delete test-dir)
           (.delete (File. dir))))))
 
-  (it "fingerprints effective tests but ignores unrelated deps.edn changes"
+  (it "fingerprints the test command and alias, not spec file contents"
     (let [dir (str "target/test-profile-" (System/nanoTime))
           spec-dir (File. dir "spec")
           spec-file (File. spec-dir "sample_spec.clj")
@@ -72,7 +72,7 @@
             (spit deps-file "{:aliases {:spec {:extra-paths [\"spec\"]}\n           :deintroverter {:new true}}}\n")
             (should= before (project/test-profile-fingerprint dir "clj -M:spec"))
             (spit spec-file "(ns changed-spec)\n")
-            (should-not= before (project/test-profile-fingerprint dir "clj -M:spec"))))
+            (should= before (project/test-profile-fingerprint dir "clj -M:spec"))))
         (finally
           (.delete spec-file)
           (.delete spec-dir)
@@ -93,6 +93,9 @@
             (should= ["custom-tests"]
                      (project/test-profile-roots dir "clj -M:custom" nil))
             (spit test-file "(ns changed-sample-spec)\n")
+            (should= before
+                     (project/test-profile-fingerprint dir "clj -M:custom"))
+            (spit deps-file "{:aliases {:custom {:extra-paths [\"other-tests\"]}}}\n")
             (should-not= before
                          (project/test-profile-fingerprint dir "clj -M:custom"))))
         (finally

@@ -251,7 +251,7 @@ Coverage freshness and provenance are checked automatically:
 - On JVM Clojure, missing or stale `target/coverage/lcov.info` is regenerated with `clj -M:cov --lcov`.
 - Babashka has no default coverage command. It runs selected mutations without LCOV filtering unless `--coverage-command` is supplied.
 - `target/coverage/clj-mutate.edn` records the coverage command, test command, and effective test-profile fingerprint.
-- The selected `deps.edn` alias or `bb.edn` task and its effective test-root files are fingerprinted; unrelated aliases are ignored.
+- The selected `deps.edn` alias or `bb.edn` task and its test-root *paths* are fingerprinted, not the contents of the tests. Editing specs does not invalidate differential mutation. Unrelated aliases are ignored.
 - A custom `--test-command` requires a matching `--coverage-command`, or `--no-coverage` to disable LCOV filtering explicitly. If roots cannot be inferred from the selected aliases/tasks, declare the shared population with `--test-roots`; roots must be existing directories relative to the project.
 - The resolved test roots are linked into each mutation worker so custom profiles execute the same files that were fingerprinted for provenance.
 - During regeneration, existing LCOV is moved aside. It is replaced only when the coverage command creates a fresh, parseable artifact; otherwise the prior file is restored and its provenance is not changed.
