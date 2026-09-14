@@ -61,14 +61,14 @@ bb mutate src/myapp/foo.cljc --scan
 clj -M:scrap spec
 
 # Mutate-test a source file.
-# Defaults to changed top-level forms when .metrics/mutate/<file>.edn exists
-# (or a legacy source footer). Unchanged forms keep their last killed/survived.
+# Defaults to changed top-level forms when .metrics/mutate/<file>.edn exists.
+# Unchanged forms keep their last killed/survived counts.
 clj -M:mutate src/myapp/foo.cljc
 
 # Scan a file for mutation counts without running coverage or specs
 clj -M:mutate src/myapp/foo.cljc --scan
 
-# Rewrite the embedded manifest without claiming that mutations passed
+# Rewrite the .metrics snapshot without claiming that mutations passed
 clj -M:mutate src/myapp/foo.cljc --update-manifest
 
 # Retest only specific lines (e.g. survivors from a previous run)
@@ -118,21 +118,21 @@ The tool automatically:
 - Applies each mutation, runs all specs with a timeout (`--timeout-factor`, default 10x baseline)
 - Targets exact concrete-syntax nodes, preserving comments and formatting
 - Restores the original file after each mutation
-- Writes a verified embedded footer manifest only after an unscoped full or differential run kills every selected mutant and leaves no uncovered mutations
-- Updates that embedded manifest after successful differential runs as well as full runs
-- Defaults to differential mutation when that footer manifest is already present
+- Writes `.metrics/mutate/<path>.edn` after a run (see Snapshots below)
+- Marks that snapshot verified only after an unscoped full or differential run kills every selected mutant and leaves no uncovered mutations
+- Defaults to differential mutation when a snapshot (or a leftover source footer) is already present
 - Prints a warning when mutation count exceeds `--mutation-warning` (default `100`)
 - Excludes specs tagged `:no-mutate` by default so mutation workers do not recursively launch nested mutation runs
 - Can reuse existing LCOV data with `--reuse-lcov`
 
-Runs narrowed with `--lines` or `--mutation` never update the verified manifest, even when their selected mutants are killed.
+Runs narrowed with `--lines` or `--mutation` never mark the snapshot verified, even when their selected mutants are killed. They do merge counts for the forms they retested.
 
 `--scan` is the fast structural mode. It skips coverage, skips test execution, and reports:
 - total mutation sites
-- changed mutation sites relative to the embedded manifest
+- changed mutation sites relative to the snapshot
 - the standard mutation-count warning
 
-`--update-manifest` rewrites the embedded footer manifest for the file's current contents without running coverage, baseline specs, or mutation workers. The result is marked unverified, so it cannot cause a no-change short circuit.
+`--update-manifest` rewrites the `.metrics` snapshot for the file's current contents without running coverage, baseline specs, or mutation workers. The result is marked unverified, so it cannot cause a no-change short circuit. A leftover source footer, if present, is stripped once the snapshot is written.
 
 ## Recommended Workflow
 
@@ -177,7 +177,7 @@ Recommended loop for each file:
 4. Rerun the same single-file mutation command.
 5. Only start the next file when the current file has no uncovered mutations and no survivors.
 
-For local incremental work, once a file has a footer manifest the default run is differential. You can still be explicit:
+For local incremental work, once a file has a `.metrics/mutate` snapshot the default run is differential. You can still be explicit:
 
 ```bash
 clj -M:mutate src/myapp/foo.cljc --since-last-run
@@ -188,12 +188,12 @@ Before baseline and worker execution, a mutation run prints:
 - covered mutation sites
 - uncovered mutation sites
 - changed mutation sites
-- whether a manifest exists
+- whether a snapshot exists
 - whether the module hash changed
 - differential surface area
-- manifest-violating surface area
+- snapshot-violating surface area
 
-To force a full rerun on a file with a manifest:
+To force a full rerun on a file with a snapshot:
 
 ```bash
 clj -M:mutate src/myapp/foo.cljc --mutate-all
@@ -201,15 +201,21 @@ clj -M:mutate src/myapp/foo.cljc --mutate-all
 
 Before a push or major release, consider running `--mutate-all` on the files you changed to verify the full file instead of relying only on differential mutation.
 
-The footer manifest is embedded at the end of the source file and records:
-- the last successful mutation test date
-- each top-level form's id
-- its line span
-- a versioned SHA-256 hash of its normalized original source slice
-- the mutation-rule version and effective test-profile fingerprint
+## Snapshots
 
-Differential mutation runs update the footer manifest on success, so the next differential run compares against the latest successful mutation baseline.
-If the source, mutation rules, or effective test profile has not changed, the tool reports `No mutations to test` without loading coverage, running the baseline, or creating workers. Version-1 manifests are treated as stale and upgraded only after a successful run. Source hashes are portable between JVM Clojure and Babashka, but verification remains tied to the effective test profile. Moving between the repository's different JVM and Babashka suites therefore re-verifies unchanged source instead of trusting results from another population.
+Results live in **`.metrics/mutate/`**, not in the source file. `src/uml_viewer/geom.clj` maps to `.metrics/mutate/uml_viewer/geom.edn`. Commit `.metrics/` in the project you are measuring.
+
+Each snapshot records:
+
+- `module-hash` and per-form `id` / `hash` (SHA-256 of the form's source)
+- `killed`, `survived`, and `uncovered` counts per form
+- `verified?`, `tested-at`, and the test-profile provenance
+
+Differential skip uses **form id + hash**. Unchanged id+hash keeps the previous counts. A rename or move is a new form: those mutants are retested, not matched to the old name. `--mutate-all` retests covered sites and rewrites the snapshot.
+
+If the source, mutation rules, or effective test profile has not changed, the tool reports `No mutations to test` without loading coverage, running the baseline, or creating workers. A leftover embedded footer in the source is read once if no snapshot file exists yet, then stripped after the snapshot is written. Do not keep both.
+
+Source hashes are portable between JVM Clojure and Babashka, but verification remains tied to the effective test profile. Moving between the repository's different JVM and Babashka suites therefore re-verifies unchanged source instead of trusting results from another population.
 
 Every mutant is reported with a file-global identifier such as `M017`, its persistent form/path/rule identity, and an exact `line:column` location. Repeated named top-level forms receive occurrence suffixes such as `defn/foo#2`, keeping persistent identities unique. Use `--mutation M017` (or the persistent identity) for a precise rerun.
 
