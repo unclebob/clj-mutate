@@ -58,7 +58,7 @@
                      false
                      [{:line 3}]
                      50))]
-      (should-contain "No prior embedded manifest found; running all covered mutations." output)
+      (should-contain "No prior snapshot found; running all covered mutations." output)
       (should-contain "Manifest exists: no" output)))
 
   (it "reports reuse-lcov diagnostics when last-modified is absent"

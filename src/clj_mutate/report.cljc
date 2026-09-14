@@ -129,7 +129,7 @@
         (println "Module hash unchanged; no mutations to test.")
         (println (format "Filtering to changed top-level forms → %d mutations to test."
                          (count sites))))
-      (println "No prior embedded manifest found; running all covered mutations."))))
+      (println "No prior snapshot found; running all covered mutations."))))
 
 (defn print-run-header
   ([source-path prev-date header-info lines since-last-run prior-manifest module-unchanged? sites warning-threshold]

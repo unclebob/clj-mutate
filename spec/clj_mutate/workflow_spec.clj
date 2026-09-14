@@ -9,6 +9,7 @@
             [clj-mutate.report :as report]
             [clj-mutate.runner :as runner]
             [clj-mutate.selection :as selection]
+            [clj-mutate.snapshot :as snapshot]
             [clj-mutate.source :as source]
             [clj-mutate.workflow :as workflow]))
 
@@ -28,10 +29,11 @@
                                      nil "clj -M:custom" ["custom-spec"])
         (should= ["custom-spec"] @received)))))
 
-(describe "run-mutation-testing embeds manifest"
-  (it "writes the footer manifest after a full run"
+(describe "run-mutation-testing writes a metrics snapshot"
+  (it "writes .metrics/mutate after a full run and strips any source footer"
     (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
           temp-path (.getPath temp-file)
+          snap (snapshot/snapshot-path temp-path)
           original "(ns test-ns)\n(defn foo [] (+ 1 2))\n"]
       (spit temp-path original)
       (with-redefs [runner/run-specs (fn [& _] :killed)
@@ -47,12 +49,15 @@
                                     (execution/mutate-and-test source-path content nil site timeout-ms test-command))
                                   sites)))]
         (workflow/run-mutation-testing temp-path)
-        (let [updated (slurp temp-path)]
-          (should-not-be-nil (manifest/extract-embedded-manifest updated))
+        (let [snap-data (snapshot/read-snapshot temp-path)
+              updated (slurp temp-path)]
+          (should-not-be-nil snap-data)
           (should= (manifest/module-hash (manifest/strip-mutation-metadata updated))
-                   (:module-hash (manifest/extract-embedded-manifest updated)))
-          (should-contain "clj-mutate-manifest-begin" updated)))
-      (.delete temp-file)))
+                   (:module-hash snap-data))
+          (should-not-contain "clj-mutate-manifest-begin" updated)))
+      (.delete temp-file)
+      (when (.exists (java.io.File. snap))
+        (.delete (java.io.File. snap)))))
 
   (it "reports previous mutation test date"
     (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
@@ -133,8 +138,10 @@
           (should-contain "Manifest-violating surface area: 2 mutations" output))
         (should (seq @captured-sites))
         (should= #{2 3} (set (map :form-index @captured-sites)))
-        (should (re-find #"\d{4}-\d{2}-\d{2}T" (:tested-at (manifest/extract-embedded-manifest (slurp temp-path))))))
-      (.delete temp-file)))
+        (should (re-find #"\d{4}-\d{2}-\d{2}T" (:tested-at (snapshot/read-snapshot temp-path)))))
+      (.delete temp-file)
+      (let [snap (java.io.File. (snapshot/snapshot-path temp-path))]
+        (when (.exists snap) (.delete snap)))))
 
   (it "short-circuits --since-last-run when the module hash is unchanged"
     (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
@@ -378,24 +385,25 @@
       (should-contain "Changed mutation sites: 0" output))))
 
 (describe "update-manifest!"
-  (it "rewrites the embedded manifest for the current file content"
+  (it "rewrites the metrics snapshot for the current file content"
     (let [temp-file (java.io.File/createTempFile "manifest" ".cljc")
           temp-path (.getPath temp-file)
           original "(ns test-ns)\n(defn foo [] (+ 1 2))\n"
           prior (manifest/build-embedded-manifest original
                                                   "2026-02-20T08:00:00-06:00")
-          stamped (manifest/embed-mutation-manifest "(ns test-ns)\n(defn foo [] (+ 1 20))\n" prior)]
+          stamped (manifest/embed-mutation-manifest "(ns test-ns)\n(defn foo [] (+ 1 20))\n" prior)
+          snap (java.io.File. (snapshot/snapshot-path temp-path))]
       (spit temp-path stamped)
       (with-redefs [manifest/now-str (fn [] "2026-03-12T12:00:00-05:00")]
         (workflow/update-manifest! temp-path))
       (let [updated (slurp temp-path)
-            embedded (manifest/extract-embedded-manifest updated)
-            analysis-content (manifest/strip-mutation-metadata updated)]
-        (should= "2026-03-12T12:00:00-05:00" (:tested-at embedded))
-        (should= false (:verified? embedded))
-        (should= (manifest/module-hash analysis-content) (:module-hash embedded))
-        (should= (manifest/top-level-form-manifest analysis-content) (:forms embedded)))
-      (.delete temp-file))))
+            data (snapshot/read-snapshot temp-path)]
+        (should-be-nil (manifest/extract-embedded-manifest updated))
+        (should= "2026-03-12T12:00:00-05:00" (:tested-at data))
+        (should= false (:verified? data))
+        (should= (manifest/module-hash updated) (:module-hash data)))
+      (.delete temp-file)
+      (when (.exists snap) (.delete snap)))))
 
 (describe "line numbers stable across stamp"
   (it "reported survivor lines from full run work with --lines"

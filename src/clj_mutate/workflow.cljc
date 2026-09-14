@@ -8,6 +8,7 @@
             [clj-mutate.report :as report]
             [clj-mutate.runner :as runner]
             [clj-mutate.selection :as selection]
+            [clj-mutate.snapshot :as snapshot]
             [clj-mutate.source :as source]))
 
 (defn mutation-provenance
@@ -41,7 +42,7 @@
   (let [{:keys [reuse-lcov test-command coverage-command test-roots]}
         (normalize-context-options options-or-reuse)
         original-content (slurp source-path)
-        prior-manifest (manifest/extract-embedded-manifest original-content)
+        prior-manifest (snapshot/load-prior source-path original-content)
         manifest-exists? (some? prior-manifest)
         analysis-content (manifest/strip-mutation-metadata original-content)
         provenance (mutation-provenance test-command test-roots)
@@ -79,7 +80,8 @@
                                  all-sites manifest-violating-form-indices))}
         base-context
         {:original-content original-content
-         :prev-date (manifest/extract-mutation-date original-content)
+         :prev-date (or (:tested-at prior-manifest)
+                        (manifest/extract-mutation-date original-content))
          :prior-manifest prior-manifest
          :manifest-exists? manifest-exists?
          :trusted-manifest? trusted-manifest?
@@ -93,13 +95,7 @@
          :changed-mutation-sites changed-mutation-sites
          :surface-area-counts surface-counts
          :changed-forms changed-form-indices
-         :provenance provenance
-         :manifest-content
-         (manifest/embed-mutation-manifest
-           analysis-content
-           (manifest/build-embedded-manifest
-             analysis-content (manifest/now-str)
-             {:verified? true :provenance provenance}))}]
+         :provenance provenance}]
     (if module-unchanged?
       (assoc base-context
              :covered-sites []
@@ -123,8 +119,9 @@
 (defn scan-mutation-sites
   [source-path mutation-warning]
   (let [content (slurp source-path)
-        prev-date (manifest/extract-mutation-date content)
-        prior-manifest (manifest/extract-embedded-manifest content)
+        prior-manifest (snapshot/load-prior source-path content)
+        prev-date (or (:tested-at prior-manifest)
+                      (manifest/extract-mutation-date content))
         analysis-content (manifest/strip-mutation-metadata content)
         all-sites (source/discover-mutations analysis-content)
         changed-sites (selection/count-changed-sites all-sites prior-manifest analysis-content)]
@@ -154,20 +151,32 @@
         (report/print-baseline-fail)
         {:status :baseline-failed}))))
 
+(defn- persist-snapshot!
+  [source-path analysis-content prior
+   {:keys [verified? provenance results uncovered sites]}]
+  (let [tested-ids (into #{} (keep :form-id sites))
+        snapshot (snapshot/build-snapshot
+                   source-path analysis-content (manifest/now-str)
+                   {:verified? verified?
+                    :provenance provenance
+                    :prior-forms (:forms prior)
+                    :results (or results [])
+                    :uncovered (or uncovered [])
+                    :tested-ids tested-ids})]
+    (snapshot/write-snapshot! source-path snapshot)
+    (snapshot/strip-source-footer! source-path)
+    snapshot))
+
 (defn update-manifest!
   [source-path]
   (when (backup/restore-from-backup! source-path)
     (report/print-backup-restored))
   (let [content (slurp source-path)
         analysis-content (manifest/strip-mutation-metadata content)
-        provenance (mutation-provenance (project/default-test-command))
-        manifest-content
-        (manifest/embed-mutation-manifest
-          analysis-content
-          (manifest/build-embedded-manifest
-            analysis-content (manifest/now-str)
-            {:verified? false :provenance provenance}))]
-    (spit source-path manifest-content)
+        prior (snapshot/load-prior source-path content)
+        provenance (mutation-provenance (project/default-test-command))]
+    (persist-snapshot! source-path analysis-content prior
+                       {:verified? false :provenance provenance})
     (report/print-manifest-updated source-path)
     {:status :passed :manifest-updated? true}))
 
@@ -224,7 +233,7 @@
   ([source-path lines timeout-factor test-command max-workers since-last-run mutate-all mutation-warning reuse-lcov mutation coverage-command test-roots]
    (when (backup/restore-from-backup! source-path)
      (report/print-backup-restored))
-   (let [prior-manifest-or-nil (manifest/extract-embedded-manifest (slurp source-path))
+   (let [prior-manifest-or-nil (snapshot/load-prior source-path (slurp source-path))
          effective-since-last-run
          (and (nil? mutation)
               (selection/default-since-last-run?
@@ -236,7 +245,7 @@
                                 :coverage-command coverage-command
                                 :test-roots test-roots})
          {:keys [prev-date prior-manifest analysis-content all-sites covered-sites uncovered
-                 module-unchanged? changed-forms manifest-content original-content
+                 module-unchanged? changed-forms original-content
                  manifest-exists? module-hash-changed? changed-mutation-sites
                  surface-area-counts coverage-status provenance]} context]
      (if module-unchanged?
@@ -277,6 +286,12 @@
            (empty? sites)
            (do
              (report/print-uncovered in-scope-uncovered)
+             (persist-snapshot! source-path analysis-content prior-manifest
+                                {:verified? (empty? in-scope-uncovered)
+                                 :provenance provenance
+                                 :results []
+                                 :uncovered in-scope-uncovered
+                                 :sites sites})
              (report/summarize-results [] lines effective-since-last-run in-scope-uncovered)
              {:status (if (seq in-scope-uncovered) :uncovered :passed)
               :mutations 0
@@ -296,18 +311,22 @@
                        status (result-status results in-scope-uncovered)
                        summary (report/summarize-results
                                  results lines effective-since-last-run in-scope-uncovered)]
-                   (cond
-                     (write-manifest? lines mutation effective-since-last-run
-                                      sites results in-scope-uncovered test-command)
-                     (spit source-path manifest-content)
-
-                     (and (nil? lines)
-                          (nil? mutation)
-                          (project/namespace-scoped-test-command? test-command)
-                          (seq sites)
-                          (every? #(= :killed (:result %)) results)
-                          (empty? in-scope-uncovered))
-                     (report/print-verified-manifest-skipped))
+                   (let [verified? (write-manifest? lines mutation effective-since-last-run
+                                                    sites results in-scope-uncovered test-command)]
+                     (persist-snapshot! source-path analysis-content prior-manifest
+                                        {:verified? verified?
+                                         :provenance provenance
+                                         :results results
+                                         :uncovered in-scope-uncovered
+                                         :sites sites})
+                     (when (and (not verified?)
+                                (nil? lines)
+                                (nil? mutation)
+                                (project/namespace-scoped-test-command? test-command)
+                                (seq sites)
+                                (every? #(= :killed (:result %)) results)
+                                (empty? in-scope-uncovered))
+                       (report/print-verified-manifest-skipped)))
                    (merge summary {:status status}))
                  (finally
                    (backup/cleanup-backup! source-path)))))))))))

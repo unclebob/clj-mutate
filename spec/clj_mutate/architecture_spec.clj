@@ -12,6 +12,7 @@
     clj-mutate.backup #{}
     clj-mutate.report #{}
     clj-mutate.manifest #{clj-mutate.digest clj-mutate.syntax}
+    clj-mutate.snapshot #{clj-mutate.manifest}
     clj-mutate.source #{clj-mutate.mutations clj-mutate.syntax}
     clj-mutate.selection #{clj-mutate.manifest}
     clj-mutate.cli #{clj-mutate.project}
@@ -21,7 +22,7 @@
     clj-mutate.execution #{clj-mutate.runner clj-mutate.source clj-mutate.workers}
     clj-mutate.workflow #{clj-mutate.backup clj-mutate.coverage clj-mutate.execution
                           clj-mutate.manifest clj-mutate.mutations clj-mutate.project clj-mutate.report
-                          clj-mutate.runner clj-mutate.selection clj-mutate.source}
+                          clj-mutate.runner clj-mutate.selection clj-mutate.snapshot clj-mutate.source}
     clj-mutate.core #{clj-mutate.cli clj-mutate.workflow}})
 
 (def far-from-io

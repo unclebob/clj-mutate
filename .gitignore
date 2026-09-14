@@ -1,5 +1,6 @@
 target/
 .cpcache/
+.metrics/
 *.mutation-backup
 .claude/
 docs/

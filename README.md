@@ -61,7 +61,8 @@ bb mutate src/myapp/foo.cljc --scan
 clj -M:scrap spec
 
 # Mutate-test a source file.
-# If the file already has a footer manifest, this defaults to changed top-level forms only.
+# Defaults to changed top-level forms when .metrics/mutate/<file>.edn exists
+# (or a legacy source footer). Unchanged forms keep their last killed/survived.
 clj -M:mutate src/myapp/foo.cljc
 
 # Scan a file for mutation counts without running coverage or specs
