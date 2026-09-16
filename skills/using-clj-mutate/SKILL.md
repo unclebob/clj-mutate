@@ -60,8 +60,10 @@ Cloverage is not available under Babashka; coverage-guided filtering is skipped 
 
 ```bash
 # deps.edn projects
-# If the file has a footer manifest, this defaults to changed top-level forms only.
+# If a snapshot exists, this defaults to changed top-level forms only.
+# Source may be .clj, .cljc, or .cljs.
 clj -M:mutate src/myapp/foo.cljc
+clj -M:mutate src/myapp/browser/main.cljs
 
 # bb.edn projects
 bb mutate src/myapp/foo.cljc
@@ -171,6 +173,7 @@ clj -M:mutate src/myapp/foo.cljc --mutate-all
 - **Specs not running**: Ensure your `:spec` alias (deps.edn) or `spec` task (bb.edn) runs all specs under `spec/`
 - **All mutants survive in bb projects**: Requires speclj 3.12.2+ for correct exit-code propagation under Babashka
 - **Missing coverage in bb projects**: Cloverage is JVM-only; Babashka projects test all lines by default
+- **ClojureScript files are uncovered**: Cloverage does not instrument `.cljs`. Mutate still writes a snapshot; uncovered sites are coverage gaps, not survivors
 - **Specs fail at baseline**: Fix your specs before mutation testing
 - **Chasing equivalent mutations**: Some survivors are mathematically equivalent; suppress them rather than writing impossible tests
 - **Recursive mutation runs**: Tag specs that invoke `run-mutation-testing` as `:no-mutate`, or override the worker command with `--test-command`

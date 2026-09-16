@@ -6,15 +6,25 @@
             [clj-mutate.syntax :as syntax]
             [rewrite-clj.zip :as z]))
 
+(defn reader-features
+  "Reader-conditional features for a source path. `.cljs` uses #{:cljs};
+   every other Clojure source uses #{:clj}."
+  [source-path]
+  (if (and source-path (str/ends-with? (str source-path) ".cljs"))
+    #{:cljs}
+    #{:clj}))
+
 (defn read-source-forms
-  [source-str]
-  (let [rdr (reader-types/source-logging-push-back-reader source-str)
-        opts {:read-cond :allow :features #{:clj} :eof ::eof}]
-    (loop [forms []]
-      (let [form (reader/read opts rdr)]
-        (if (= ::eof form)
-          forms
-          (recur (conj forms form)))))))
+  ([source-str]
+   (read-source-forms source-str #{:clj}))
+  ([source-str features]
+   (let [rdr (reader-types/source-logging-push-back-reader source-str)
+         opts {:read-cond :allow :features (or features #{:clj}) :eof ::eof}]
+     (loop [forms []]
+       (let [form (reader/read opts rdr)]
+         (if (= ::eof form)
+           forms
+           (recur (conj forms form))))))))
 
 (defn discover-all-mutations
   "Discover mutations in already-read forms. This compatibility API is useful

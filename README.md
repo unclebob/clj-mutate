@@ -60,10 +60,11 @@ bb mutate src/myapp/foo.cljc --scan
 # Analyze spec structure and SCRAP scores
 clj -M:scrap spec
 
-# Mutate-test a source file.
+# Mutate-test a source file (.clj, .cljc, or .cljs).
 # Defaults to changed top-level forms when .metrics/mutate/<file>.edn exists.
 # Unchanged forms keep their last killed/survived counts.
 clj -M:mutate src/myapp/foo.cljc
+clj -M:mutate src/myapp/browser/main.cljs
 
 # Scan a file for mutation counts without running coverage or specs
 clj -M:mutate src/myapp/foo.cljc --scan

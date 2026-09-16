@@ -8,7 +8,16 @@
   (it "reads Clojure forms from a string"
     (let [forms (source/read-source-forms "(ns foo) (defn bar [] 42)")]
       (should= 2 (count forms))
-      (should= 'ns (first (first forms))))))
+      (should= 'ns (first (first forms)))))
+
+  (it "uses :cljs features for .cljs paths"
+    (should= #{:cljs} (source/reader-features "src/foo/bar.cljs"))
+    (should= #{:clj} (source/reader-features "src/foo/bar.cljc"))
+    (should= #{:clj} (source/reader-features "src/foo/bar.clj")))
+
+  (it "keeps :cljs reader-conditional branches"
+    (let [forms (source/read-source-forms "#?(:cljs (+ 1 2) :clj (+ 3 4))" #{:cljs})]
+      (should= '(+ 1 2) (first forms)))))
 
 (describe "discover-all-mutations"
   (it "finds mutations across multiple forms"
@@ -39,6 +48,13 @@
           sites (source/discover-mutations src)
           eq-sites (filter #(and (= (:original %) '=) (= (:mutant %) 'not=)) sites)]
       (should= 0 (count eq-sites))))
+
+  (it "discovers mutations in ClojureScript host interop"
+    (let [src "(ns foo)\n(defn ok? [response]\n  (if (.-ok response) 1 0))\n"
+          sites (source/discover-mutations src)
+          pairs (set (map (juxt :original :mutant) sites))]
+      (should (contains? pairs ['if 'if-not]))
+      (should (contains? pairs [1 0]))))
 
   (it "discovers head mutations inside #() reader macros"
     (let [src "(defn f [item] #(= item %))\n"

@@ -14,7 +14,13 @@
   (it "uses the file name when the source is outside the project"
     (let [root (.getCanonicalPath (io/file "."))]
       (should= (.getPath (io/file root ".metrics" "mutate" "outside.edn"))
-               (snapshot/snapshot-path "/tmp/outside.clj" root)))))
+               (snapshot/snapshot-path "/tmp/outside.clj" root))))
+
+  (it "maps a ClojureScript source file to the same snapshot layout"
+    (let [root (.getCanonicalPath (io/file "."))
+          src (str root "/src/myapp/browser/global_scores.cljs")]
+      (should= (.getPath (io/file root ".metrics" "mutate" "myapp" "browser" "global_scores.edn"))
+               (snapshot/snapshot-path src root)))))
 
 (describe "merge-forms"
   (it "keeps killed/survived when id and hash are unchanged"
