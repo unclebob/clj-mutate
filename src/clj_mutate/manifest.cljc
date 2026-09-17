@@ -87,15 +87,6 @@
   (and (= current-version (:version manifest))
        (= hash-algorithm (:hash-algorithm manifest))))
 
-(defn trusted-manifest?
-  [manifest provenance]
-  (and (current-manifest? manifest)
-       (true? (:verified? manifest))
-       (string? (:tested-at manifest))
-       (string? (:module-hash manifest))
-       (vector? (:forms manifest))
-       (= provenance (:provenance manifest))))
-
 (defn changed-form-indices
   [forms manifest]
   (let [{:keys [changed-form-indices]} (changed-form-indices-by-reason forms manifest)]
@@ -128,15 +119,14 @@
 (defn build-embedded-manifest
   ([source-or-forms date-str]
    (build-embedded-manifest source-or-forms date-str {}))
-  ([source-or-forms date-str {:keys [verified? provenance]
-                              :or {verified? true provenance {}}}]
-   {:version current-version
-    :hash-algorithm hash-algorithm
-    :verified? verified?
-    :tested-at date-str
-    :module-hash (module-hash source-or-forms)
-    :provenance provenance
-    :forms (top-level-form-manifest source-or-forms)}))
+  ([source-or-forms date-str {:keys [outcomes]
+                              :or {outcomes {}}}]
+   (cond-> {:version current-version
+            :hash-algorithm hash-algorithm
+            :tested-at date-str
+            :module-hash (module-hash source-or-forms)
+            :forms (top-level-form-manifest source-or-forms)}
+     (seq outcomes) (assoc :outcomes outcomes))))
 
 (defn embed-mutation-manifest
   [content manifest]
@@ -158,7 +148,3 @@
   []
   (.format (java.time.OffsetDateTime/now)
            java.time.format.DateTimeFormatter/ISO_OFFSET_DATE_TIME))
-
-;; clj-mutate-manifest-begin
-;; {:version 1, :tested-at "2026-09-02T15:17:41.568678-05:00", :module-hash "-1343313178", :forms [{:id "form/0/ns", :kind "ns", :line 1, :end-line nil, :hash "153964126"} {:id "def/mutation-comment-re", :kind "def", :line 5, :end-line nil, :hash "739874186"} {:id "def/manifest-start-line", :kind "def", :line 6, :end-line nil, :hash "-1825565512"} {:id "def/manifest-end-line", :kind "def", :line 7, :end-line nil, :hash "744098285"} {:id "def/manifest-block-re", :kind "def", :line 8, :end-line nil, :hash "-1957750279"} {:id "form/5/declare", :kind "declare", :line 16, :end-line nil, :hash "803429075"} {:id "defn/extract-mutation-date", :kind "defn", :line 19, :end-line nil, :hash "-569806568"} {:id "defn/stamp-mutation-date", :kind "defn", :line 26, :end-line nil, :hash "-1761741461"} {:id "defn/extract-embedded-manifest", :kind "defn", :line 33, :end-line nil, :hash "1043997453"} {:id "defn/strip-embedded-manifest", :kind "defn", :line 41, :end-line nil, :hash "1175673264"} {:id "defn/strip-mutation-metadata", :kind "defn", :line 45, :end-line nil, :hash "1841423544"} {:id "defn-/form-kind", :kind "defn-", :line 51, :end-line nil, :hash "184035403"} {:id "defn-/top-level-form-id", :kind "defn-", :line 56, :end-line nil, :hash "317205413"} {:id "defn/top-level-form-manifest", :kind "defn", :line 71, :end-line nil, :hash "767610706"} {:id "defn/module-hash", :kind "defn", :line 83, :end-line nil, :hash "-1370811007"} {:id "defn/changed-form-indices", :kind "defn", :line 87, :end-line nil, :hash "1255192901"} {:id "defn/changed-form-indices-by-reason", :kind "defn", :line 92, :end-line nil, :hash "-30389076"} {:id "defn/build-embedded-manifest", :kind "defn", :line 116, :end-line nil, :hash "1204487047"} {:id "defn/embed-mutation-manifest", :kind "defn", :line 123, :end-line nil, :hash "1197463130"} {:id "defn/now-str", :kind "defn", :line 139, :end-line nil, :hash "285237630"}]}
-;; clj-mutate-manifest-end

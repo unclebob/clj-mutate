@@ -60,7 +60,7 @@ Cloverage is not available under Babashka; coverage-guided filtering is skipped 
 
 ```bash
 # deps.edn projects
-# If a snapshot exists, this defaults to changed top-level forms only.
+# If a snapshot exists, this defaults to survivors plus new/rewritten forms.
 # Source may be .clj, .cljc, or .cljs.
 clj -M:mutate src/myapp/foo.cljc
 clj -M:mutate src/myapp/browser/main.cljs
@@ -71,13 +71,13 @@ bb mutate src/myapp/foo.cljc
 # Scan mutation counts without running coverage or specs
 clj -M:mutate src/myapp/foo.cljc --scan
 
-# Rewrite the embedded manifest without running coverage or mutations
+# Human override: record the module as successfully mutated
 clj -M:mutate src/myapp/foo.cljc --update-manifest
 
 # Retest only specific lines (e.g. survivors from previous run)
 clj -M:mutate src/myapp/foo.cljc --lines 45,67,89
 
-# Retest only top-level forms changed since the last successful mutation run
+# Retry survivors and sites in new or rewritten forms
 clj -M:mutate src/myapp/foo.cljc --since-last-run
 
 # Override differential mode and run all covered mutations
@@ -92,8 +92,8 @@ The tool automatically:
 - Runs a baseline test to verify all included specs pass unmodified
 - Applies each mutation, runs all specs with timeout (10x baseline)
 - Restores original file after each mutation
-- Writes an embedded footer manifest with `:tested-at` and top-level form hashes on successful runs
-- Defaults to differential mutation when that footer manifest already exists
+- Writes `.metrics/mutate/<file>.edn` with form hashes and per-mutant outcomes
+- Defaults to differential mutation when a snapshot already exists
 - For deps.edn projects: runs coverage if `lcov.info` is missing or stale
 - For bb.edn projects: uses existing `lcov.info` if present, otherwise tests all lines
 - Can reuse existing LCOV data with `--reuse-lcov`
@@ -101,7 +101,7 @@ The tool automatically:
 
 Use `--scan` when you want a fast module-size signal without paying for coverage or test execution. It reports total mutation sites, changed mutation sites, and the usual warning threshold output.
 
-Use `--update-manifest` when you want to accept the current file contents as the new differential baseline without paying for coverage or mutation execution.
+Use `--update-manifest` only with human authorization. It records every current site as killed without running workers.
 
 Use `--reuse-lcov` when coverage has already been generated and you want to skip an expensive LCOV refresh. The run will warn that covered/uncovered classification may be stale. If `target/coverage/lcov.info` is missing, the run prints a clear error and exits.
 
@@ -150,7 +150,7 @@ For incremental work on an already-mutated file, the default run is already diff
 clj -M:mutate src/myapp/foo.cljc --since-last-run
 ```
 
-This compares current top-level forms with the footer manifest from the last successful mutation run and tests only forms whose hashes changed.
+This retries survivors and sites in new or rewritten top-level forms. Previously killed mutants on unchanged forms are skipped. If the module hash is unchanged and there are no survivors, nothing is tested.
 
 Before baseline and worker execution, differential runs also print:
 - total mutation sites

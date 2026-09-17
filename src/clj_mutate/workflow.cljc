@@ -3,25 +3,12 @@
             [clj-mutate.coverage :as coverage]
             [clj-mutate.execution :as execution]
             [clj-mutate.manifest :as manifest]
-            [clj-mutate.mutations :as mutations]
             [clj-mutate.project :as project]
             [clj-mutate.report :as report]
             [clj-mutate.runner :as runner]
             [clj-mutate.selection :as selection]
             [clj-mutate.snapshot :as snapshot]
             [clj-mutate.source :as source]))
-
-(defn mutation-provenance
-  ([test-command]
-   (mutation-provenance test-command nil))
-  ([test-command test-roots]
-   {:mutation-rules-version mutations/rules-version
-    :test-command test-command
-    :test-roots (project/test-profile-roots
-                  (System/getProperty "user.dir") test-command test-roots)
-    :test-profile-fingerprint
-    (project/test-profile-fingerprint
-      (System/getProperty "user.dir") test-command test-roots)}))
 
 (defn- normalize-context-options
   [options-or-reuse]
@@ -30,10 +17,6 @@
     {:reuse-lcov options-or-reuse
      :test-command (project/default-test-command)
      :coverage-command (project/default-coverage-command)}))
-
-(defn- all-form-indices
-  [analysis-content]
-  (set (range (count (manifest/top-level-form-manifest analysis-content)))))
 
 (defn mutation-run-context
   "Plan a run, then load coverage only when the plan has work. The third
@@ -45,58 +28,44 @@
         prior-manifest (snapshot/load-prior source-path original-content)
         manifest-exists? (some? prior-manifest)
         analysis-content (manifest/strip-mutation-metadata original-content)
-        provenance (mutation-provenance test-command test-roots)
         current-module-hash (manifest/module-hash analysis-content)
-        trusted-manifest? (manifest/trusted-manifest? prior-manifest provenance)
-        same-module? (= current-module-hash (:module-hash prior-manifest))
-        module-unchanged? (and since-last-run trusted-manifest? same-module?)
-        module-hash-changed? (when manifest-exists? (not same-module?))
-        by-reason (when (and trusted-manifest? (not same-module?))
+        usable? (snapshot/usable-snapshot? prior-manifest)
+        same-module? (and usable?
+                          (= current-module-hash (:module-hash prior-manifest)))
+        by-reason (when usable?
                     (manifest/changed-form-indices-by-reason analysis-content prior-manifest))
-        every-form (all-form-indices analysis-content)
-        new-form-indices (if trusted-manifest?
-                           (or (:new-form-indices by-reason) #{})
-                           (if manifest-exists? #{} every-form))
-        manifest-violating-form-indices
-        (if trusted-manifest?
-          (or (:manifest-violating-form-indices by-reason) #{})
-          (if manifest-exists? every-form #{}))
-        changed-form-indices (cond
-                               (not since-last-run) nil
-                               module-unchanged? #{}
-                               trusted-manifest? (:changed-form-indices by-reason)
-                               :else every-form)
         all-sites (source/discover-mutations analysis-content)
-        changed-mutation-sites
-        (cond
-          (not trusted-manifest?) (count all-sites)
-          same-module? 0
-          :else (count (selection/filter-by-form-indices
-                         all-sites (:changed-form-indices by-reason))))
+        retry-sites (if (and since-last-run usable?)
+                      (snapshot/sites-to-retry all-sites prior-manifest analysis-content)
+                      all-sites)
+        skip-module? (and since-last-run same-module? (empty? retry-sites))
+        new-form-indices (or (:new-form-indices by-reason) #{})
+        rewritten-form-indices (or (:manifest-violating-form-indices by-reason) #{})
         surface-counts {:new-form-mutations
                         (count (selection/filter-by-form-indices all-sites new-form-indices))
                         :manifest-violating-form-mutations
                         (count (selection/filter-by-form-indices
-                                 all-sites manifest-violating-form-indices))}
+                                 all-sites rewritten-form-indices))}
         base-context
         {:original-content original-content
          :prev-date (or (:tested-at prior-manifest)
                         (manifest/extract-mutation-date original-content))
          :prior-manifest prior-manifest
          :manifest-exists? manifest-exists?
-         :trusted-manifest? trusted-manifest?
          :analysis-content analysis-content
-         :module-unchanged? module-unchanged?
-         :module-hash-changed? module-hash-changed?
+         :same-module? same-module?
+         :skip-module? skip-module?
+         :module-hash-changed? (when manifest-exists? (not same-module?))
          :reuse-lcov reuse-lcov
+         :test-roots (project/test-profile-roots
+                       (System/getProperty "user.dir") test-command test-roots)
          :new-form-indices new-form-indices
-         :manifest-violating-form-indices manifest-violating-form-indices
+         :manifest-violating-form-indices rewritten-form-indices
          :all-sites all-sites
-         :changed-mutation-sites changed-mutation-sites
-         :surface-area-counts surface-counts
-         :changed-forms changed-form-indices
-         :provenance provenance}]
-    (if module-unchanged?
+         :retry-sites retry-sites
+         :changed-mutation-sites (count retry-sites)
+         :surface-area-counts surface-counts}]
+    (if skip-module?
       (assoc base-context
              :covered-sites []
              :uncovered []
@@ -109,8 +78,15 @@
             coverage-data (if (map? loaded)
                             loaded
                             {:lines loaded :status :unavailable})
-            [covered-sites uncovered]
-            (source/partition-by-coverage all-sites (:lines coverage-data))]
+            retry-set (into #{} (map :mutation-id retry-sites))
+            [covered-all uncovered-all]
+            (source/partition-by-coverage all-sites (:lines coverage-data))
+            covered-sites (if (and since-last-run usable?)
+                            (filterv #(contains? retry-set (:mutation-id %)) covered-all)
+                            covered-all)
+            uncovered (if (and since-last-run usable?)
+                        (filterv #(contains? retry-set (:mutation-id %)) uncovered-all)
+                        uncovered-all)]
         (assoc base-context
                :covered-sites covered-sites
                :uncovered uncovered
@@ -124,7 +100,10 @@
                       (manifest/extract-mutation-date content))
         analysis-content (manifest/strip-mutation-metadata content)
         all-sites (source/discover-mutations analysis-content)
-        changed-sites (selection/count-changed-sites all-sites prior-manifest analysis-content)]
+        retry (snapshot/sites-to-retry all-sites prior-manifest analysis-content)
+        changed-sites (if (snapshot/usable-snapshot? prior-manifest)
+                        (count retry)
+                        (count all-sites))]
     (report/print-scan-report source-path prev-date (count all-sites) changed-sites mutation-warning)
     {:status :passed :mutations (count all-sites)}))
 
@@ -153,13 +132,12 @@
 
 (defn- persist-snapshot!
   [source-path analysis-content prior
-   {:keys [verified? provenance results uncovered sites]}]
+   {:keys [results uncovered sites]}]
   (let [tested-ids (into #{} (keep :form-id sites))
         snapshot (snapshot/build-snapshot
                    source-path analysis-content (manifest/now-str)
-                   {:verified? verified?
-                    :provenance provenance
-                    :prior-forms (:forms prior)
+                   {:prior-forms (:forms prior)
+                    :prior-outcomes (:outcomes prior)
                     :results (or results [])
                     :uncovered (or uncovered [])
                     :tested-ids tested-ids})]
@@ -168,40 +146,25 @@
     snapshot))
 
 (defn update-manifest!
+  "Human override: record every current site as killed without running workers."
   [source-path]
   (when (backup/restore-from-backup! source-path)
     (report/print-backup-restored))
   (let [content (slurp source-path)
         analysis-content (manifest/strip-mutation-metadata content)
         prior (snapshot/load-prior source-path content)
-        provenance (mutation-provenance (project/default-test-command))]
+        sites (source/discover-mutations analysis-content)
+        results (mapv (fn [site] {:site site :result :killed}) sites)]
     (persist-snapshot! source-path analysis-content prior
-                       {:verified? false :provenance provenance})
+                       {:results results :uncovered [] :sites sites})
     (report/print-manifest-updated source-path)
     {:status :passed :manifest-updated? true}))
 
-(defn write-manifest?
-  "True only after an unfiltered-by-site run killed every in-scope covered
-   mutation and left no in-scope uncovered mutations. Namespace-scoped test
-   commands (-n/--namespace) cannot mint a verified stamp."
-  ([lines sites results uncovered]
-   (write-manifest? lines nil false sites results uncovered nil))
-  ([lines mutation _since-last-run sites results uncovered]
-   (write-manifest? lines mutation _since-last-run sites results uncovered nil))
-  ([lines mutation _since-last-run sites results uncovered test-command]
-   (and (nil? lines)
-        (nil? mutation)
-        (not (project/namespace-scoped-test-command? test-command))
-        (seq sites)
-        (every? #(= :killed (:result %)) results)
-        (empty? uncovered))))
-
 (defn- scoped-uncovered
-  [uncovered lines mutation since-last-run changed-forms]
+  [uncovered lines mutation]
   (cond
     mutation (selection/filter-by-mutation uncovered mutation)
     lines (selection/filter-by-lines uncovered lines)
-    since-last-run (selection/filter-by-form-indices uncovered changed-forms)
     :else uncovered))
 
 (defn- result-status
@@ -245,17 +208,16 @@
                                 :coverage-command coverage-command
                                 :test-roots test-roots})
          {:keys [prev-date prior-manifest analysis-content all-sites covered-sites uncovered
-                 module-unchanged? changed-forms original-content
+                 skip-module? original-content test-roots
                  manifest-exists? module-hash-changed? changed-mutation-sites
-                 surface-area-counts coverage-status provenance]} context]
-     (if module-unchanged?
+                 surface-area-counts coverage-status]} context]
+     (if skip-module?
        (do
          (report/print-no-changes source-path prev-date)
          {:status :no-changes :mutations 0})
        (let [sites (selection/select-mutation-sites
-                     covered-sites lines mutation effective-since-last-run false changed-forms)
-             in-scope-uncovered
-             (scoped-uncovered uncovered lines mutation effective-since-last-run changed-forms)
+                     covered-sites lines mutation false false nil)
+             in-scope-uncovered (scoped-uncovered uncovered lines mutation)
              selector-found? (or (nil? mutation)
                                  (seq (selection/filter-by-mutation all-sites mutation)))]
          (report/print-run-header
@@ -287,9 +249,7 @@
            (do
              (report/print-uncovered in-scope-uncovered)
              (persist-snapshot! source-path analysis-content prior-manifest
-                                {:verified? (empty? in-scope-uncovered)
-                                 :provenance provenance
-                                 :results []
+                                {:results []
                                  :uncovered in-scope-uncovered
                                  :sites sites})
              (report/summarize-results [] lines effective-since-last-run in-scope-uncovered)
@@ -307,30 +267,14 @@
                  (let [results
                        (run-mutation-suite sites source-path analysis-content
                                            timeout-ms max-workers test-command
-                                           (:test-roots provenance))
+                                           test-roots)
                        status (result-status results in-scope-uncovered)
                        summary (report/summarize-results
                                  results lines effective-since-last-run in-scope-uncovered)]
-                   (let [verified? (write-manifest? lines mutation effective-since-last-run
-                                                    sites results in-scope-uncovered test-command)]
-                     (persist-snapshot! source-path analysis-content prior-manifest
-                                        {:verified? verified?
-                                         :provenance provenance
-                                         :results results
-                                         :uncovered in-scope-uncovered
-                                         :sites sites})
-                     (when (and (not verified?)
-                                (nil? lines)
-                                (nil? mutation)
-                                (project/namespace-scoped-test-command? test-command)
-                                (seq sites)
-                                (every? #(= :killed (:result %)) results)
-                                (empty? in-scope-uncovered))
-                       (report/print-verified-manifest-skipped)))
+                   (persist-snapshot! source-path analysis-content prior-manifest
+                                      {:results results
+                                       :uncovered in-scope-uncovered
+                                       :sites sites})
                    (merge summary {:status status}))
                  (finally
                    (backup/cleanup-backup! source-path)))))))))))
-
-;; clj-mutate-manifest-begin
-;; {:version 1, :tested-at "2026-09-02T15:18:25.990555-05:00", :module-hash "-887927905", :forms []}
-;; clj-mutate-manifest-end

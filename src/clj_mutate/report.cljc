@@ -127,7 +127,7 @@
     (if prior-manifest
       (if module-unchanged?
         (println "Module hash unchanged; no mutations to test.")
-        (println (format "Filtering to changed top-level forms → %d mutations to test."
+        (println (format "Retrying survivors and new/changed form sites → %d mutations to test."
                          (count sites))))
       (println "No prior snapshot found; running all covered mutations."))))
 
@@ -278,12 +278,4 @@
 
 (defn print-manifest-updated
   [source-path]
-  (println (str "Updated unverified manifest: " source-path)))
-
-(defn print-verified-manifest-skipped
-  []
-  (println "Not writing a verified manifest because the test command selects namespaces with -n/--namespace."))
-
-;; clj-mutate-manifest-begin
-;; {:version 1, :tested-at "2026-09-02T15:18:37.279832-05:00", :module-hash "144987029", :forms []}
-;; clj-mutate-manifest-end
+  (println (str "Recorded successful mutation override: " source-path)))

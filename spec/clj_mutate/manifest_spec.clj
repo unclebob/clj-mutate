@@ -78,17 +78,13 @@
                   "(defn f [] 1)\n(defn f [] 2)\n")]
       (should= ["defn/f" "defn/f#2"] (mapv :id forms))))
 
-  (it "marks version-2 verified manifests with matching provenance as trusted"
-    (let [provenance {:mutation-rules-version "2" :test-profile "abc"}
-          current (manifest/build-embedded-manifest
-                    "(ns foo)\n" "2026-09-03T10:00:00-05:00"
-                    {:verified? true :provenance provenance})
-          unverified (assoc current :verified? false)
+  (it "recognizes version-2 manifests"
+    (let [current (manifest/build-embedded-manifest
+                    "(ns foo)\n" "2026-09-03T10:00:00-05:00")
           version-one {:version 1 :module-hash "old"}]
       (should (manifest/current-manifest? current))
-      (should (manifest/trusted-manifest? current provenance))
-      (should-not (manifest/trusted-manifest? current {:test-profile "changed"}))
-      (should-not (manifest/trusted-manifest? unverified provenance))
+      (should-not (contains? current :verified?))
+      (should-not (contains? current :provenance))
       (should-not (manifest/current-manifest? version-one))))
 
   (it "finds changed top-level form indices from a prior manifest"

@@ -41,22 +41,24 @@
 ## Mutation Selection
 
 - `--scan` reports mutation counts only and does not execute mutation testing.
-- `--update-manifest` rewrites the embedded manifest for the current file contents without executing mutation testing.
+- `--update-manifest` is a human override that records every current site as killed without executing mutation testing.
 - `--reuse-lcov` reuses existing LCOV coverage data without refreshing it.
 - `--lines` restricts execution to covered mutation sites on the specified source lines.
-- `--since-last-run` restricts execution to covered mutation sites in changed top-level forms relative to the embedded manifest.
-- `--mutate-all` forces execution of all covered mutation sites, even when a manifest exists.
-- If no explicit selection option is given and an embedded manifest exists, the tool defaults to differential mutation at the top-level-form level.
-- If no manifest exists and no explicit selection option is given, the tool executes all covered mutation sites.
+- `--since-last-run` retries survivors and covered sites in new or rewritten top-level forms.
+- `--mutate-all` forces execution of all covered mutation sites, even when a snapshot exists.
+- If no explicit selection option is given and a snapshot exists, the tool defaults to differential mutation.
+- If no snapshot exists and no explicit selection option is given, the tool executes all covered mutation sites.
 
-## Embedded Manifest
+## Snapshots
 
-- Successful runs write a footer manifest at the end of the source file.
-- Successful differential runs update that same footer manifest; they do not leave the prior baseline in place.
-- The manifest contains:
+- Successful runs write `.metrics/mutate/<path>.edn`.
+- Successful differential runs update that snapshot; they do not leave the prior baseline in place.
+- A leftover source footer is read once if no snapshot exists, then stripped.
+- The snapshot contains:
   - `:version`
   - `:tested-at` as ISO offset date-time
   - `:module-hash`
+  - `:outcomes` mapping mutation ids to `:killed` or `:survived`
   - `:forms`, one entry per top-level form
 - Each form entry contains:
   - stable id
@@ -64,13 +66,15 @@
   - start line
   - end line
   - semantic hash
+  - killed, survived, and uncovered counts
 
 ## Differential Behavior
 
-- Differential comparison is based on the embedded manifest, not git.
+- Differential comparison is based on the `.metrics/mutate` snapshot (or a leftover source footer), not git.
 - A module-wide semantic hash is checked first.
-- If the module hash is unchanged, zero mutations are executed and the run reports that no mutations need testing.
-- If the module hash differs, top-level form hashes determine which forms changed.
+- If the module hash is unchanged and there are no survivors, zero mutations are executed and the run reports that no mutations need testing.
+- If the module hash is unchanged and survivors remain, only those survivors are retried.
+- If the module hash differs, top-level form hashes determine which forms changed. New and rewritten forms are fully retested. Unchanged forms retry survivors only and skip previously killed mutants.
 - Differential run headers report:
   - total mutation sites
   - covered mutation sites
@@ -170,7 +174,7 @@ Less practical for a simple standalone parser are metrics that require semantic 
 
 ## Postconditions
 
-- On successful mutation runs, the source file ends with an updated embedded manifest.
-- `--update-manifest` updates the embedded manifest even though no mutation run occurred.
+- On successful mutation runs, `.metrics/mutate/<path>.edn` is updated.
+- `--update-manifest` writes a snapshot that records every current site as killed, even though no mutation run occurred.
 - On baseline failure, mutation execution does not proceed.
 - On interrupted runs, a backup file allows restoration on the next invocation.

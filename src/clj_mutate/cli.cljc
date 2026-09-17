@@ -14,13 +14,13 @@
     "\n"
     "Options:\n"
     "  --scan                Report mutation counts without running tests or coverage\n"
-    "  --update-manifest     Write an unverified manifest without running mutations\n"
+    "  --update-manifest     Record the module as successfully mutated (human override)\n"
     "  --reuse-lcov          Reuse matching LCOV without refreshing coverage\n"
     "  --coverage-command CMD Command that generates LCOV for the worker test profile\n"
     "  --no-coverage         Disable LCOV filtering and run all selected mutants\n"
     "  --lines L1,L2,...     Run only mutations on these source lines\n"
     "  --mutation ID         Run one mutation by M-number or persistent mutation ID\n"
-    "  --since-last-run       Run only mutations in changed top-level forms since last successful run\n"
+    "  --since-last-run       Retry survivors and sites in new or rewritten forms\n"
     "  --mutate-all           Run all covered mutations even if a manifest exists\n"
     "  --mutation-warning N   Warn when more than N mutations are found (default 100)\n"
     "  --timeout-factor N     Mutation timeout multiplier vs baseline (default 10)\n"
@@ -37,9 +37,9 @@
     "  A custom --test-command requires --coverage-command or --no-coverage.\n"
     "  Test and coverage commands must select the same roots. If they cannot be inferred\n"
     "  from the selected deps.edn alias or bb.edn task, provide --test-roots.\n"
-    "  Runs narrowed by --lines, --mutation, or a -n/--namespace test command do not\n"
-    "  update the verified manifest. --scan and --update-manifest skip test/coverage\n"
-    "  profile checks because they do not run tests or coverage.\n"))
+    "  --scan and --update-manifest skip test/coverage profile checks because they\n"
+    "  do not run tests or coverage. --update-manifest is a human override that marks\n"
+    "  every current site killed without running workers.\n"))
 
 (def default-options
   {:source-path nil

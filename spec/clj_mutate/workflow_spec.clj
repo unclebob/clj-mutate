@@ -5,7 +5,6 @@
             [clj-mutate.coverage :as coverage]
             [clj-mutate.execution :as execution]
             [clj-mutate.manifest :as manifest]
-            [clj-mutate.project :as project]
             [clj-mutate.report :as report]
             [clj-mutate.runner :as runner]
             [clj-mutate.selection :as selection]
@@ -104,9 +103,10 @@
                        :prior-manifest prior-manifest
                        :analysis-content updated
                        :all-sites (source/discover-all-mutations (source/read-source-forms updated))
-                       :covered-sites (source/discover-all-mutations (source/read-source-forms updated))
+                       :covered-sites (filterv #(contains? #{2 3} (:form-index %))
+                                               (source/discover-all-mutations (source/read-source-forms updated)))
                        :uncovered []
-                       :module-unchanged? false
+                       :skip-module? false
                        :changed-forms #{2 3}
                        :manifest-content (manifest/embed-mutation-manifest updated prior-manifest)
                        :manifest-exists? true
@@ -127,7 +127,7 @@
         (let [output (with-out-str
                        (workflow/run-mutation-testing temp-path nil 10 "clj -M:spec" nil true false 50 true))]
           (should-contain "Total mutation sites: 4" output)
-          (should-contain "Covered mutation sites: 4" output)
+          (should-contain "Covered mutation sites: 2" output)
           (should-contain "Uncovered mutation sites: 0" output)
           (should-contain "Changed mutation sites: 4" output)
           (should-contain "Manifest exists: yes" output)
@@ -148,9 +148,7 @@
           temp-path (.getPath temp-file)
           source "(ns test-ns)\n(defn unchanged [] (+ 1 2))\n"
           prior-manifest (manifest/build-embedded-manifest
-                           source "2026-02-20T08:00:00-06:00"
-                           {:verified? true
-                            :provenance (workflow/mutation-provenance "clj -M:spec")})
+                           source "2026-02-20T08:00:00-06:00")
           source-with-manifest (manifest/embed-mutation-manifest source prior-manifest)
           called? (atom false)]
       (spit temp-path source-with-manifest)
@@ -171,36 +169,26 @@
           (should= source-with-manifest (slurp temp-path))))
       (.delete temp-file)))
 
-  (it "invalidates an unchanged manifest when effective custom tests change"
-    (let [temp-file (java.io.File/createTempFile "mutant-profile" ".cljc")
+  (it "retries only survivors when the module hash is unchanged"
+    (let [temp-file (java.io.File/createTempFile "mutant-survivors" ".cljc")
           temp-path (.getPath temp-file)
-          source "(ns test-ns)\n(defn unchanged [] (+ 1 2))\n"
-          old-provenance {:mutation-rules-version "2"
-                          :test-command "clj -M:custom"
-                          :test-roots ["custom-tests"]
-                          :test-profile-fingerprint "old-tests"}
-          prior-manifest (manifest/build-embedded-manifest
-                           source "2026-02-20T08:00:00-06:00"
-                           {:verified? true :provenance old-provenance})
-          coverage-loaded? (atom false)]
-      (spit temp-path (manifest/embed-mutation-manifest source prior-manifest))
+          source "(ns test-ns)\n(defn unchanged [] (+ 1 0))\n"
+          sites (source/discover-mutations source)
+          killed-id (:mutation-id (first sites))
+          survived-id (:mutation-id (second sites))
+          prior (assoc (manifest/build-embedded-manifest source "2026-02-20T08:00:00-06:00")
+                  :outcomes {killed-id :killed survived-id :survived})
+          captured (atom nil)]
+      (spit temp-path (manifest/embed-mutation-manifest source prior))
       (try
-        (with-redefs [project/test-profile-roots
-                      (fn [& _] ["custom-tests"])
-                      project/test-profile-fingerprint
-                      (fn [& _] "changed-tests")
-                      coverage/load-coverage
-                      (fn [& _]
-                        (reset! coverage-loaded? true)
-                        {:lines nil :status :coverage-disabled})]
-          (let [context (workflow/mutation-run-context
-                          temp-path true
-                          {:test-command "clj -M:custom"
-                           :coverage-command false
-                           :test-roots ["custom-tests"]})]
-            (should= false (:trusted-manifest? context))
-            (should= false (:module-unchanged? context))
-            (should @coverage-loaded?)))
+        (with-redefs [runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
+                      coverage/load-coverage (fn [& _] {:lines nil :status :coverage-disabled})
+                      execution/run-mutations-parallel
+                      (fn [tested _ _ _ _ _ & _]
+                        (reset! captured tested)
+                        (mapv (fn [site] {:site site :result :killed :timeout? false}) tested))]
+          (workflow/run-mutation-testing temp-path)
+          (should= [survived-id] (mapv :mutation-id @captured)))
         (finally (.delete temp-file)))))
 
   (it "defaults to differential mutation when a manifest exists"
@@ -209,9 +197,7 @@
           initial "(ns test-ns)\n(defn unchanged [] (+ 1 2))\n(defn changed [] (+ 3 4))\n"
           updated "(ns test-ns)\n(defn unchanged [] (+ 1 2))\n(defn changed [] (+ 30 4))\n"
           prior-manifest (manifest/build-embedded-manifest
-                           initial "2026-02-20T08:00:00-06:00"
-                           {:verified? true
-                            :provenance (workflow/mutation-provenance (cli/default-test-command))})
+                           initial "2026-02-20T08:00:00-06:00")
           captured-sites (atom nil)]
       (spit temp-path (manifest/embed-mutation-manifest updated prior-manifest))
       (with-redefs [runner/run-specs (fn [& _] :killed)
@@ -224,7 +210,7 @@
         (let [output (with-out-str (workflow/run-mutation-testing temp-path))]
           (should (seq @captured-sites))
           (should (every? #(= 2 (:form-index %)) @captured-sites))
-          (should-contain "Filtering to changed top-level forms" output)))
+          (should-contain "Retrying survivors and new/changed form sites" output)))
       (.delete temp-file)))
 
   (it "runs an explicitly selected mutation even when a trusted manifest is unchanged"
@@ -233,9 +219,7 @@
           content "(ns test-ns)\n(defn unchanged [] (+ 1 2))\n"
           test-command (cli/default-test-command)
           prior-manifest (manifest/build-embedded-manifest
-                           content "2026-02-20T08:00:00-06:00"
-                           {:verified? true
-                            :provenance (workflow/mutation-provenance test-command)})
+                           content "2026-02-20T08:00:00-06:00")
           captured-sites (atom nil)]
       (spit temp-path (manifest/embed-mutation-manifest content prior-manifest))
       (try
@@ -328,7 +312,7 @@
                        :all-sites []
                        :covered-sites []
                        :uncovered []
-                       :module-unchanged? false
+                       :skip-module? false
                        :changed-forms #{}
                        :manifest-content "(ns test-ns)\n"
                        :manifest-exists? false
@@ -400,8 +384,14 @@
             data (snapshot/read-snapshot temp-path)]
         (should-be-nil (manifest/extract-embedded-manifest updated))
         (should= "2026-03-12T12:00:00-05:00" (:tested-at data))
-        (should= false (:verified? data))
+        (should-not (contains? data :verified?))
+        (should (every? #(= :killed %) (vals (:outcomes data))))
         (should= (manifest/module-hash updated) (:module-hash data)))
+        (let [called? (atom false)]
+          (with-redefs [coverage/load-coverage (fn [& _] (reset! called? true) nil)
+                        execution/run-mutations-parallel (fn [& _] (reset! called? true) [])]
+            (with-out-str (workflow/run-mutation-testing temp-path))
+            (should= false @called?)))
       (.delete temp-file)
       (when (.exists snap) (.delete snap)))))
 
@@ -439,44 +429,6 @@
             (should-contain "+ -> -" lines-report)
             (should= original (slurp temp-path)))))
       (.delete temp-file))))
-
-(describe "write-manifest?"
-  (it "writes only after a complete kill with no uncovered sites"
-    (let [killed [{:result :killed}]
-          survived [{:result :survived}]]
-      (should (workflow/write-manifest? nil [{:index 0}] killed []))
-      (should-not (workflow/write-manifest? #{2} [{:index 0}] killed []))
-      (should-not (workflow/write-manifest? nil [] killed []))
-      (should-not (workflow/write-manifest? nil [{:index 0}] survived []))
-      (should-not (workflow/write-manifest? nil [{:index 0}] killed [{:line 9}]))
-      (should-not (workflow/write-manifest?
-                    nil nil false [{:index 0}] killed []
-                    "clojure -M:unit -n stella.integration-method-test"))
-      (should (workflow/write-manifest?
-                nil nil false [{:index 0}] killed []
-                "clojure -M:unit"))))
-
-  (it "does not stamp a verified manifest for a namespace-scoped test command"
-    (let [temp-file (java.io.File/createTempFile "mutant-scoped" ".cljc")
-          temp-path (.getPath temp-file)
-          original "(ns test-ns)\n(defn foo [] (+ 1 2))\n"
-          test-command "clojure -M:unit -n test-ns"]
-      (spit temp-path original)
-      (try
-        (with-redefs [runner/run-specs-timed (fn [_] {:result :survived :elapsed-ms 100})
-                      coverage/load-coverage
-                      (fn [& _] {:lines #{1 2} :status :fresh})
-                      execution/run-mutations-parallel
-                      (fn [sites _ _ _ _ _ & _]
-                        (mapv (fn [site] {:site site :result :killed :timeout? false})
-                              sites))]
-          (let [output (with-out-str
-                         (workflow/run-mutation-testing
-                           temp-path nil 10 test-command nil false true 100
-                           false nil false ["spec"]))]
-            (should-contain "Not writing a verified manifest" output)
-            (should-be-nil (manifest/extract-embedded-manifest (slurp temp-path)))))
-        (finally (.delete temp-file))))))
 
 (describe "run-mutation-testing first run reporting"
   (it "prints uncovered sites when no footer exists"
