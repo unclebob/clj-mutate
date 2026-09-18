@@ -237,7 +237,12 @@ Every mutant is reported with a file-global identifier such as `M017`, its persi
 | Comparison | `>` ↔ `>=`, `<` ↔ `<=` |
 | Equality | `=` ↔ `not=` |
 | Boolean | `true` ↔ `false` |
-| Conditional | `if` ↔ `if-not`, `when` ↔ `when-not` |
+| Conditional | `if` ↔ `if-not`, `when` ↔ `when-not`, `if-let` then/else swap, `when-let` inverted to `if-let` |
+| Logic | `and` ↔ `or` |
+| Coercion | `double` ↔ `int` |
+| Seq | `first` ↔ `second`, `filter` ↔ `remove`, `take` ↔ `drop`, `rest` ↔ `next`, `every?` ↔ `some` |
+| Numeric | `min` ↔ `max` |
+| Predicate | `pos?` ↔ `neg?`, `even?` ↔ `odd?`, `nil?` ↔ `some?` |
 | Constant | `0` ↔ `1` |
 
 Known-equivalent mutations (e.g. comparisons on `(rand)`, constants inside `rand-nth` pools) are auto-suppressed.

@@ -98,10 +98,15 @@
                                :semantic-path form-path
                                :rule-id (:id rule)
                                :mutation-id (mutation-identity form-id form-path (:id rule))
-                               :original (:original rule)
-                               :mutant (:mutant rule)
+                               :original (if (= :form (:position rule))
+                                           node
+                                           (:original rule))
+                               :mutant (if (= :form (:position rule))
+                                         (mutations/apply-rule rule node)
+                                         (:mutant rule))
                                :category (:category rule)
-                               :description (str (:original rule) " -> " (:mutant rule))})]
+                               :description (or (:description rule)
+                                                (str (:original rule) " -> " (:mutant rule)))})]
               (recur (z/next loc) (conj sites site)))
             (recur (z/next loc) sites)))))))
 
@@ -129,7 +134,11 @@
     (let [root (syntax/of-source original-content)
           target (syntax/location-at-path root path)
           actual (syntax/sexpr target)]
-      (when-not (= (:original site) actual)
+      (when-not (or (= (:original site) actual)
+                    (and (seq? (:original site))
+                         (seq? actual)
+                         (= (first (:original site)) (first actual))
+                         (= (count (:original site)) (count actual))))
         (throw (ex-info "Mutation target does not match the discovered source node"
                         {:site site
                          :actual actual

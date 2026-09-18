@@ -1,6 +1,6 @@
 (ns clj-mutate.mutations)
 
-(def rules-version "3")
+(def rules-version "4")
 
 (defn- rand-comparison?
   "True if parent is a comparison form with (rand) as second element.
@@ -114,6 +114,42 @@
    {:id :conditional/if-not-to-if :original 'if-not :mutant 'if :category :conditional :position :head :suppress-when [rand-nth-single-element-guard?]}
    {:id :conditional/when-to-when-not :original 'when :mutant 'when-not :category :conditional :position :head}
    {:id :conditional/when-not-to-when :original 'when-not :mutant 'when :category :conditional :position :head}
+   {:id :logic/and-to-or :original 'and :mutant 'or :category :logic :position :head}
+   {:id :logic/or-to-and :original 'or :mutant 'and :category :logic :position :head}
+   {:id :coercion/double-to-int :original 'double :mutant 'int :category :coercion :position :head}
+   {:id :coercion/int-to-double :original 'int :mutant 'double :category :coercion :position :head}
+   {:id :seq/first-to-second :original 'first :mutant 'second :category :seq :position :head}
+   {:id :seq/second-to-first :original 'second :mutant 'first :category :seq :position :head}
+   {:id :seq/filter-to-remove :original 'filter :mutant 'remove :category :seq :position :head}
+   {:id :seq/remove-to-filter :original 'remove :mutant 'filter :category :seq :position :head}
+   {:id :seq/take-to-drop :original 'take :mutant 'drop :category :seq :position :head}
+   {:id :seq/drop-to-take :original 'drop :mutant 'take :category :seq :position :head}
+   {:id :seq/rest-to-next :original 'rest :mutant 'next :category :seq :position :head}
+   {:id :seq/next-to-rest :original 'next :mutant 'rest :category :seq :position :head}
+   {:id :seq/every-to-some :original 'every? :mutant 'some :category :seq :position :head}
+   {:id :seq/some-to-every :original 'some :mutant 'every? :category :seq :position :head}
+   {:id :numeric/min-to-max :original 'min :mutant 'max :category :numeric :position :head}
+   {:id :numeric/max-to-min :original 'max :mutant 'min :category :numeric :position :head}
+   {:id :predicate/pos-to-neg :original 'pos? :mutant 'neg? :category :predicate :position :head}
+   {:id :predicate/neg-to-pos :original 'neg? :mutant 'pos? :category :predicate :position :head}
+   {:id :predicate/even-to-odd :original 'even? :mutant 'odd? :category :predicate :position :head}
+   {:id :predicate/odd-to-even :original 'odd? :mutant 'even? :category :predicate :position :head}
+   {:id :predicate/nil-to-some :original 'nil? :mutant 'some? :category :predicate :position :head}
+   {:id :predicate/some-to-nil :original 'some? :mutant 'nil? :category :predicate :position :head}
+   {:id :conditional/if-let-swap-branches
+    :original 'if-let
+    :mutant 'if-let
+    :category :conditional
+    :position :form
+    :transform :swap-if-let-arms
+    :description "if-let then/else swapped"}
+   {:id :conditional/when-let-invert
+    :original 'when-let
+    :mutant 'if-let
+    :category :conditional
+    :position :form
+    :transform :invert-when-let
+    :description "when-let -> if-let inverted"}
    {:id :constant/zero-to-one :original 0 :mutant 1 :category :constant :position :any :suppress-when [rand-nth-single-element-guard? inside-rand-nth-literal?]}
    {:id :constant/one-to-zero :original 1 :mutant 0 :category :constant :position :any :suppress-when [rand-nth-single-element-guard? inside-rand-nth-literal?]}])
 
@@ -136,18 +172,33 @@
         (and (seq? body)
              (= node (first body))))))
 
+(defn- suppressed?
+  [rule context]
+  (when-let [suppressors (:suppress-when rule)]
+    (some #(% context) suppressors)))
+
+(defn- form-head-match?
+  [rule node]
+  (and (= :form (:position rule))
+       (seq? node)
+       (= (:original rule) (first node))
+       (>= (count node) 3)))
+
 (defn matches-rule?
-  "True if rule matches node. For :head rules, node must be
-   a list/seq and the symbol must be its first element.
-   Suppressed if any :suppress-when predicate returns true for context."
+  "True if rule matches node. :head matches the operator of a list.
+   :form matches the whole list whose first element is :original.
+   :any matches the token anywhere. Suppressed if any :suppress-when
+   predicate returns true for context."
   [rule context node]
   (let [parent (:parent context)]
-    (and (= (:original rule) node)
-         (not (when-let [suppressors (:suppress-when rule)]
-                (some #(% context) suppressors)))
-         (or (= :any (:position rule))
-             (and (= :head (:position rule))
-                  (head-position? parent node))))))
+    (and (not (suppressed? rule context))
+         (cond
+           (form-head-match? rule node) true
+           (not= (:original rule) node) false
+           (= :any (:position rule)) true
+           (and (= :head (:position rule))
+                (head-position? parent node)) true
+           :else false))))
 
 (defn matching-rule
   "Return the first mutation rule matching node in context."
@@ -196,7 +247,8 @@
                                      :category (:category rule)
                                      :line (:line site-location)
                                      :column (:column site-location)
-                                     :description (str (:original rule) " -> " (:mutant rule))})
+                                     :description (or (:description rule)
+                                                      (str (:original rule) " -> " (:mutant rule)))})
                   (swap! counter inc))
                 (walk-children walk grandparent parent node site-location)))]
       (walk nil nil nil form nil))
@@ -211,6 +263,38 @@
     (map? node) (into {} (map (fn [[k v]] [(walk-fn grandparent parent node k) (walk-fn grandparent parent node v)]) node))
     (set? node) (into #{} (map #(walk-fn grandparent parent node %) node))
     :else node))
+
+(defn- swap-if-let-arms
+  "Invert if-let by swapping then/else. Missing else becomes nil then."
+  [form]
+  (let [xs (vec form)]
+    (case (count xs)
+      3 (list 'if-let (xs 1) nil (xs 2))
+      4 (list 'if-let (xs 1) (xs 3) (xs 2))
+      form)))
+
+(defn- invert-when-let
+  "Invert when-let: run the body only when the binding fails."
+  [form]
+  (let [xs (vec form)
+        bodies (subvec xs 2)]
+    (if (seq bodies)
+      (list 'if-let
+            (xs 1)
+            nil
+            (if (= 1 (count bodies))
+              (first bodies)
+              (cons 'do (seq bodies))))
+      form)))
+
+(defn apply-rule
+  [rule node]
+  (case (:transform rule)
+    :swap-if-let-arms (swap-if-let-arms node)
+    :invert-when-let (invert-when-let node)
+    (if (seq? node)
+      (cons (:mutant rule) (rest node))
+      (:mutant rule))))
 
 (defn apply-mutation
   "Walk form tree, apply the mutation at the given index.
@@ -228,11 +312,13 @@
                   (let [idx @counter]
                     (swap! counter inc)
                     (if (= idx target-index)
-                      (if (seq? node)
-                        (let [mutant (:mutant rule)
-                              new-parent (cons mutant (rest node))]
-                          (apply list mutant (map #(walk grandparent parent new-parent %) (rest node))))
-                        (:mutant rule))
+                      (let [mutated (apply-rule rule node)]
+                        (if (and (seq? mutated)
+                                 (not= :form (:position rule)))
+                          (apply list (first mutated)
+                                 (map #(walk grandparent parent mutated %)
+                                      (rest mutated)))
+                          mutated))
                       (rebuild-coll walk great-grandparent grandparent parent node)))
                   (rebuild-coll walk great-grandparent grandparent parent node))))]
       (walk nil nil nil form))))

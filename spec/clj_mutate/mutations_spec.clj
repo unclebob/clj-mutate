@@ -201,6 +201,62 @@
           plus-site (first (filter #(= (:original %) '+) sites))]
       (should-be-nil (:line plus-site)))))
 
+(describe "logic seq and coercion duals"
+  (it "swaps and/or, filter/remove, first/second, and double/int"
+    (should (has-site? 'and 'or (m/find-mutations '(and a b))))
+    (should (has-site? 'or 'and (m/find-mutations '(or a b))))
+    (should (has-site? 'filter 'remove (m/find-mutations '(filter pred xs))))
+    (should (has-site? 'remove 'filter (m/find-mutations '(remove pred xs))))
+    (should (has-site? 'first 'second (m/find-mutations '(first xs))))
+    (should (has-site? 'second 'first (m/find-mutations '(second xs))))
+    (should (has-site? 'double 'int (m/find-mutations '(double n))))
+    (should (has-site? 'int 'double (m/find-mutations '(int n))))
+    (should (has-site? 'min 'max (m/find-mutations '(min a b))))
+    (should (has-site? 'max 'min (m/find-mutations '(max a b))))
+    (should (has-site? 'pos? 'neg? (m/find-mutations '(pos? n))))
+    (should (has-site? 'neg? 'pos? (m/find-mutations '(neg? n))))
+    (should (has-site? 'even? 'odd? (m/find-mutations '(even? n))))
+    (should (has-site? 'odd? 'even? (m/find-mutations '(odd? n))))
+    (should (has-site? 'nil? 'some? (m/find-mutations '(nil? x))))
+    (should (has-site? 'some? 'nil? (m/find-mutations '(some? x))))
+    (should (has-site? 'take 'drop (m/find-mutations '(take n xs))))
+    (should (has-site? 'drop 'take (m/find-mutations '(drop n xs))))
+    (should (has-site? 'rest 'next (m/find-mutations '(rest xs))))
+    (should (has-site? 'next 'rest (m/find-mutations '(next xs))))
+    (should (has-site? 'every? 'some (m/find-mutations '(every? pred xs))))
+    (should (has-site? 'some 'every? (m/find-mutations '(some pred xs))))))
+
+(describe "if-let and when-let inversion"
+  (it "swaps if-let then and else"
+    (let [form '(if-let [x e] :then :else)
+          sites (m/find-mutations form)
+          site (first (filter #(= :conditional/if-let-swap-branches (:rule-id %)) sites))]
+      (should-not-be-nil site)
+      (should= '(if-let [x e] :else :then)
+               (m/apply-mutation form (:index site)))))
+
+  (it "inverts a one-armed if-let by moving the body to else"
+    (let [form '(if-let [x e] :then)
+          sites (m/find-mutations form)
+          site (first (filter #(= :conditional/if-let-swap-branches (:rule-id %)) sites))]
+      (should= '(if-let [x e] nil :then)
+               (m/apply-mutation form (:index site)))))
+
+  (it "inverts when-let into if-let with a nil then"
+    (let [form '(when-let [x e] :body)
+          sites (m/find-mutations form)
+          site (first (filter #(= :conditional/when-let-invert (:rule-id %)) sites))]
+      (should-not-be-nil site)
+      (should= '(if-let [x e] nil :body)
+               (m/apply-mutation form (:index site)))))
+
+  (it "wraps multi-body when-let in do"
+    (let [form '(when-let [x e] :a :b)
+          sites (m/find-mutations form)
+          site (first (filter #(= :conditional/when-let-invert (:rule-id %)) sites))]
+      (should= '(if-let [x e] nil (do :a :b))
+               (m/apply-mutation form (:index site))))))
+
 (describe "apply-mutation"
   (it "applies mutation at a specific index"
     (let [form '(+ 1 2)
