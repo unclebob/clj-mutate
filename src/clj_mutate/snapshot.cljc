@@ -122,26 +122,53 @@
             acc
             uncovered)))
 
+(defn- outcome-ids-for-form? [form-id outcomes]
+  (boolean (some (fn [[mid]] (outcome-for-form? form-id mid))
+                 (or outcomes {}))))
+
+(defn- site-counts [sites]
+  (frequencies (keep :form-id (or sites []))))
+
 (defn merge-forms
-  "Recount killed/survived from outcomes. Unchanged forms keep uncovered."
-  [prior-forms current-forms stats-by-id tested-ids outcomes]
-  (let [prior-by-key (into {}
-                           (map (fn [f] [[(:id f) (:hash f)] f])
-                                (or prior-forms [])))]
-    (mapv (fn [f]
-            (let [prev (get prior-by-key [(:id f) (:hash f)])
-                  run (get stats-by-id (:id f))
-                  oc (counts-from-outcomes (:id f) outcomes)
-                  uncovered (cond
-                              (contains? tested-ids (:id f))
-                              (or (:uncovered run) 0)
-                              prev (or (:uncovered prev) 0)
-                              :else 0)]
-              (assoc f
-                :killed (:killed oc)
-                :survived (:survived oc)
-                :uncovered uncovered)))
-          current-forms)))
+  ([prior-forms current-forms stats-by-id tested-ids outcomes]
+   (merge-forms prior-forms current-forms stats-by-id tested-ids outcomes nil))
+  ([prior-forms current-forms stats-by-id tested-ids outcomes all-sites]
+   (let [prior-by-key (into {}
+                            (map (fn [f] [[(:id f) (:hash f)] f])
+                                 (or prior-forms [])))
+         n-sites (site-counts all-sites)]
+     (mapv (fn [f]
+             (let [prev (get prior-by-key [(:id f) (:hash f)])
+                   run (get stats-by-id (:id f))
+                   oc (counts-from-outcomes (:id f) outcomes)
+                   tested? (contains? tested-ids (:id f))
+                   sites (or (get n-sites (:id f)) 0)]
+               (cond
+                 tested?
+                 (assoc f
+                   :killed (or (:killed oc) 0)
+                   :survived (or (:survived oc) 0)
+                   :uncovered (or (:uncovered run) 0)
+                   :sites sites)
+
+                 prev
+                 (assoc f
+                   :killed (if (outcome-ids-for-form? (:id f) outcomes)
+                             (or (:killed oc) 0)
+                             (or (:killed prev) 0))
+                   :survived (if (outcome-ids-for-form? (:id f) outcomes)
+                               (or (:survived oc) 0)
+                               (or (:survived prev) 0))
+                   :uncovered (or (:uncovered prev) 0)
+                   :sites sites)
+
+                 :else
+                 (assoc f
+                   :killed (or (:killed oc) 0)
+                   :survived (or (:survived oc) 0)
+                   :uncovered 0
+                   :sites sites))))
+           current-forms))))
 
 (defn sites-to-retry
   "Survivors on unchanged forms, plus every site on new or rewritten forms.
@@ -169,12 +196,12 @@
 
 (defn build-snapshot
   [source-path analysis-content date-str
-   {:keys [prior-forms prior-outcomes results uncovered tested-ids]
-    :or {prior-forms [] prior-outcomes {} results [] uncovered [] tested-ids #{}}}]
+   {:keys [prior-forms prior-outcomes results uncovered tested-ids all-sites]
+    :or {prior-forms [] prior-outcomes {} results [] uncovered [] tested-ids #{} all-sites []}}]
   (let [current (manifest/top-level-form-manifest analysis-content)
         stats (stats-by-form-id results uncovered)
         outcomes (merge-outcomes prior-outcomes results current prior-forms)
-        forms (merge-forms prior-forms current stats tested-ids outcomes)]
+        forms (merge-forms prior-forms current stats tested-ids outcomes all-sites)]
     {:version manifest/current-version
      :hash-algorithm manifest/hash-algorithm
      :tested-at date-str

@@ -48,7 +48,21 @@
           current [{:id "defn/new" :hash "a" :kind "defn"}]
           merged (snapshot/merge-forms prior current {} #{} {})]
       (should= 0 (:killed (first merged)))
-      (should= "defn/new" (:id (first merged))))))
+      (should= "defn/new" (:id (first merged)))))
+
+  (it "keeps prior counts on an unchanged form when the retry set is empty"
+    (let [prior [{:id "defn/foo" :hash "a" :killed 4 :survived 1 :uncovered 0}]
+          current [{:id "defn/foo" :hash "a" :kind "defn"}]
+          merged (snapshot/merge-forms prior current {} #{} {})]
+      (should= 4 (:killed (first merged)))
+      (should= 1 (:survived (first merged)))
+      (should= 0 (:uncovered (first merged)))))
+
+  (it "records operator count per form"
+    (let [current [{:id "defn/foo" :hash "a"}]
+          sites [{:form-id "defn/foo"} {:form-id "defn/foo"}]
+          merged (snapshot/merge-forms [] current {} #{} {} sites)]
+      (should= 2 (:sites (first merged))))))
 
 (describe "stats-by-form-id"
   (it "counts killed, survived, and uncovered per form"

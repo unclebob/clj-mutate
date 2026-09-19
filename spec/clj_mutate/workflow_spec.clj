@@ -143,6 +143,42 @@
       (let [snap (java.io.File. (snapshot/snapshot-path temp-path))]
         (when (.exists snap) (.delete snap)))))
 
+  (it "keeps prior outcomes when the module hash changes but nothing is retried"
+    (let [temp-file (java.io.File/createTempFile "mutant-hash-only" ".clj")
+          temp-path (.getPath temp-file)
+          initial "(ns test-ns)\n(defn unchanged [] (+ 1 2))\n"
+          updated "(ns test-ns (:require [clojure.string :as str]))\n(defn unchanged [] (+ 1 2))\n"
+          sites (source/discover-mutations initial)
+          killed-id (:mutation-id (first sites))
+          prior (assoc (manifest/build-embedded-manifest initial "2026-02-20T08:00:00-06:00")
+                  :outcomes {killed-id :killed}
+                  :forms (mapv #(assoc % :killed 1 :survived 0 :uncovered 0)
+                               (manifest/top-level-form-manifest initial)))
+          called? (atom false)]
+      (spit temp-path updated)
+      (snapshot/write-snapshot! temp-path prior)
+      (try
+        (with-redefs [runner/run-specs (fn [& _] (throw (Exception. "should not run")))
+                      runner/run-specs-timed (fn [_] (throw (Exception. "should not run")))
+                      coverage/load-coverage (fn [& _] (throw (Exception. "should not run")))
+                      execution/run-mutations-parallel
+                      (fn [& _]
+                        (reset! called? true)
+                        [])]
+          (let [output (with-out-str
+                         (workflow/run-mutation-testing temp-path nil 10 "clj -M:spec" nil true))
+                snap (snapshot/read-snapshot temp-path)
+                foo (first (filter #(= "defn/unchanged" (:id %)) (:forms snap)))]
+            (should= false @called?)
+            (should-contain "No mutations to test." output)
+            (should= :killed (get (:outcomes snap) killed-id))
+            (should= 1 (:killed foo))
+            (should-not= (:module-hash prior) (:module-hash snap))))
+        (finally
+          (.delete temp-file)
+          (let [snap (java.io.File. (snapshot/snapshot-path temp-path))]
+            (when (.exists snap) (.delete snap)))))))
+
   (it "short-circuits --since-last-run when the module hash is unchanged"
     (let [temp-file (java.io.File/createTempFile "mutant" ".cljc")
           temp-path (.getPath temp-file)

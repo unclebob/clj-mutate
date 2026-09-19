@@ -180,7 +180,7 @@ For local incremental work, once a file has a `.metrics/mutate` snapshot the def
 clj -M:mutate src/myapp/foo.cljc --since-last-run
 ```
 
-Differential mutation retries **survivors** and sites in **new or rewritten** top-level forms. Previously killed mutants on unchanged forms are not rerun. If the module hash is unchanged and there are no survivors, the run reports `No mutations to test` without loading coverage or starting workers. If survivors remain, they are retried even when the source hash has not changed, because new tests may kill them.
+Differential mutation retries **survivors** and sites in **new or rewritten** top-level forms. Previously killed mutants on unchanged forms are not rerun. If there is nothing to retry (no survivors, no new or rewritten forms), the run reports `No mutations to test` without loading coverage or starting workers. If only the module hash changed (for example a require), prior outcomes are kept and the snapshot hash is updated. Do not record zeros for untested forms. If survivors remain, they are retried even when the source hash has not changed, because new tests may kill them.
 
 Before baseline and worker execution, a mutation run prints:
 - total mutation sites

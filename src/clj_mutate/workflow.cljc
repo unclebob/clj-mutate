@@ -38,7 +38,7 @@
         retry-sites (if (and since-last-run usable?)
                       (snapshot/sites-to-retry all-sites prior-manifest analysis-content)
                       all-sites)
-        skip-module? (and since-last-run same-module? (empty? retry-sites))
+        skip-module? (and since-last-run usable? (empty? retry-sites))
         new-form-indices (or (:new-form-indices by-reason) #{})
         rewritten-form-indices (or (:manifest-violating-form-indices by-reason) #{})
         surface-counts {:new-form-mutations
@@ -132,7 +132,7 @@
 
 (defn- persist-snapshot!
   [source-path analysis-content prior
-   {:keys [results uncovered sites]}]
+   {:keys [results uncovered sites all-sites]}]
   (let [tested-ids (into #{} (keep :form-id sites))
         snapshot (snapshot/build-snapshot
                    source-path analysis-content (manifest/now-str)
@@ -140,7 +140,8 @@
                     :prior-outcomes (:outcomes prior)
                     :results (or results [])
                     :uncovered (or uncovered [])
-                    :tested-ids tested-ids})]
+                    :tested-ids tested-ids
+                    :all-sites (or all-sites sites)})]
     (snapshot/write-snapshot! source-path snapshot)
     (snapshot/strip-source-footer! source-path)
     snapshot))
@@ -208,11 +209,15 @@
                                 :coverage-command coverage-command
                                 :test-roots test-roots})
          {:keys [prev-date prior-manifest analysis-content all-sites covered-sites uncovered
-                 skip-module? original-content test-roots
+                 skip-module? original-content test-roots same-module?
                  manifest-exists? module-hash-changed? changed-mutation-sites
                  surface-area-counts coverage-status]} context]
      (if skip-module?
        (do
+         (when (and prior-manifest (not same-module?))
+           (persist-snapshot! source-path analysis-content prior-manifest
+                              {:results [] :uncovered [] :sites []
+                               :all-sites all-sites}))
          (report/print-no-changes source-path prev-date)
          {:status :no-changes :mutations 0})
        (let [sites (selection/select-mutation-sites
@@ -251,7 +256,8 @@
              (persist-snapshot! source-path analysis-content prior-manifest
                                 {:results []
                                  :uncovered in-scope-uncovered
-                                 :sites sites})
+                                 :sites sites
+                                 :all-sites all-sites})
              (report/summarize-results [] lines effective-since-last-run in-scope-uncovered)
              {:status (if (seq in-scope-uncovered) :uncovered :passed)
               :mutations 0
@@ -274,7 +280,8 @@
                    (persist-snapshot! source-path analysis-content prior-manifest
                                       {:results results
                                        :uncovered in-scope-uncovered
-                                       :sites sites})
+                                       :sites sites
+                                       :all-sites all-sites})
                    (merge summary {:status status}))
                  (finally
                    (backup/cleanup-backup! source-path)))))))))))

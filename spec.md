@@ -66,7 +66,7 @@
   - start line
   - end line
   - semantic hash
-  - killed, survived, and uncovered counts
+  - killed, survived, uncovered, and operator (`:sites`) counts
 
 ## Differential Behavior
 
@@ -74,7 +74,7 @@
 - A module-wide semantic hash is checked first.
 - If the module hash is unchanged and there are no survivors, zero mutations are executed and the run reports that no mutations need testing.
 - If the module hash is unchanged and survivors remain, only those survivors are retried.
-- If the module hash differs, top-level form hashes determine which forms changed. New and rewritten forms are fully retested. Unchanged forms retry survivors only and skip previously killed mutants.
+- If the module hash differs, top-level form hashes determine which forms changed. New and rewritten forms are fully retested. Unchanged forms retry survivors only and skip previously killed mutants. If that retry set is empty, nothing is executed and the snapshot is rewritten with the new module hash and prior outcomes kept. Do not record zeros for untested forms.
 - Differential run headers report:
   - total mutation sites
   - covered mutation sites
