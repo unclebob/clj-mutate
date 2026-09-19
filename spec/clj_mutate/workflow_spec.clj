@@ -143,6 +143,30 @@
       (let [snap (java.io.File. (snapshot/snapshot-path temp-path))]
         (when (.exists snap) (.delete snap)))))
 
+  (it "writes uncovered counts when every site is uncovered"
+    (let [temp-file (java.io.File/createTempFile "mutant-uncovered" ".cljc")
+          temp-path (.getPath temp-file)
+          original "(ns test-ns)\n(defn foo [] (+ 1 2))\n"]
+      (spit temp-path original)
+      (try
+        (with-redefs [runner/run-specs (fn [& _] (throw (Exception. "should not run")))
+                      runner/run-specs-timed (fn [_] (throw (Exception. "should not run")))
+                      coverage/load-coverage (fn [& _] #{})
+                      execution/run-mutations-parallel
+                      (fn [& _] (throw (Exception. "should not run")))]
+          (with-out-str
+            (workflow/run-mutation-testing temp-path nil 10 "clj -M:spec" nil false true 100))
+          (let [snap (snapshot/read-snapshot temp-path)
+                foo (first (filter #(= "defn/foo" (:id %)) (:forms snap)))]
+            (should (pos? (:sites foo)))
+            (should= (:sites foo) (:uncovered foo))
+            (should= 0 (:killed foo))
+            (should= 0 (:survived foo))))
+        (finally
+          (.delete temp-file)
+          (let [snap (java.io.File. (snapshot/snapshot-path temp-path))]
+            (when (.exists snap) (.delete snap)))))))
+
   (it "keeps prior outcomes when the module hash changes but nothing is retried"
     (let [temp-file (java.io.File/createTempFile "mutant-hash-only" ".clj")
           temp-path (.getPath temp-file)

@@ -142,13 +142,17 @@
                    run (get stats-by-id (:id f))
                    oc (counts-from-outcomes (:id f) outcomes)
                    tested? (contains? tested-ids (:id f))
-                   sites (or (get n-sites (:id f)) 0)]
+                   sites (or (get n-sites (:id f)) 0)
+                   uncovered (or (:uncovered run)
+                                 (when (and prev (not tested?))
+                                   (:uncovered prev))
+                                 0)]
                (cond
                  tested?
                  (assoc f
                    :killed (or (:killed oc) 0)
                    :survived (or (:survived oc) 0)
-                   :uncovered (or (:uncovered run) 0)
+                   :uncovered uncovered
                    :sites sites)
 
                  prev
@@ -159,14 +163,14 @@
                    :survived (if (outcome-ids-for-form? (:id f) outcomes)
                                (or (:survived oc) 0)
                                (or (:survived prev) 0))
-                   :uncovered (or (:uncovered prev) 0)
+                   :uncovered uncovered
                    :sites sites)
 
                  :else
                  (assoc f
                    :killed (or (:killed oc) 0)
                    :survived (or (:survived oc) 0)
-                   :uncovered 0
+                   :uncovered uncovered
                    :sites sites))))
            current-forms))))
 

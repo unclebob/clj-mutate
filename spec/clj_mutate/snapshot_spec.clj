@@ -62,7 +62,27 @@
     (let [current [{:id "defn/foo" :hash "a"}]
           sites [{:form-id "defn/foo"} {:form-id "defn/foo"}]
           merged (snapshot/merge-forms [] current {} #{} {} sites)]
-      (should= 2 (:sites (first merged))))))
+      (should= 2 (:sites (first merged)))))
+
+  (it "records this run's uncovered count on a form that was not executed"
+    (let [current [{:id "defn/foo" :hash "a"}]
+          stats {"defn/foo" {:uncovered 12}}
+          sites (repeat 12 {:form-id "defn/foo"})
+          merged (snapshot/merge-forms [] current stats #{} {} sites)]
+      (should= 12 (:uncovered (first merged)))
+      (should= 12 (:sites (first merged)))
+      (should= 0 (:killed (first merged)))
+      (should= 0 (:survived (first merged)))))
+
+  (it "applies this run's uncovered count to an unchanged untested form"
+    (let [prior [{:id "defn/foo" :hash "a" :killed 0 :survived 0 :uncovered 0}]
+          current [{:id "defn/foo" :hash "a"}]
+          stats {"defn/foo" {:uncovered 12}}
+          merged (snapshot/merge-forms prior current stats #{} {}
+                                       (repeat 12 {:form-id "defn/foo"}))]
+      (should= 12 (:uncovered (first merged)))
+      (should= 0 (:killed (first merged)))
+      (should= 0 (:survived (first merged))))))
 
 (describe "stats-by-form-id"
   (it "counts killed, survived, and uncovered per form"
